@@ -22,6 +22,7 @@ These records are part of the project, not temporary notes.
 | [002](002-minimal-fastapi.md) | 2026-08-19 | Minimal FastAPI with `/health` | Complete |
 | [003](003-containerize-api.md) | 2026-08-20 | Containerize API with Docker | Complete |
 | [004](004-compose-postgresql.md) | 2026-08-24 | Docker Compose and PostgreSQL | Complete |
+| [005](005-git-github-baseline.md) | 2026-08-25 | Establish Git and GitHub baseline | Complete |
 
 ## Quick Links
 

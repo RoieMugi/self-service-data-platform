@@ -55,10 +55,20 @@ basic platform works reliably.
 
 Checkpoint 004 is complete. FastAPI and PostgreSQL now run together with Docker
 Compose, including database readiness and application-level database health
-checks. The next increment is dataset registration with persisted metadata.
+checks. The completed work is versioned locally and published to the private
+GitHub repository `RoieMugi/self-service-data-platform`. The next engineering
+increment is dataset registration with persisted metadata.
+
+## Recent activity (2026-08-25)
+
+- Established the first Git baseline for Checkpoints 001-004.
+- Verified the baseline with 3 passing automated tests.
+- Published `main` to the private GitHub repository
+  `RoieMugi/self-service-data-platform`.
+- Recorded the version-control work as Session 005; product Checkpoint 005
+  remains dataset registration.
 
 ## Recent activity (2026-08-20)
 
 - Created `/memories/repo/session_start_skill.md` — repository-scoped session-start checklist for assistant behavior.
 - Created `/memories/repo/project_skill.md` — project-specific skill with "Learning together" rules and session-start phrases.
-

@@ -111,6 +111,27 @@ distinguish application health from database connectivity.
 
 ---
 
+## **Session 005: Git and GitHub Baseline**
+
+**Date:** 2026-08-25
+**Status:** Complete
+
+**What:** Created the first Git commit for the completed platform foundation and
+published the `main` branch to a private GitHub repository.
+
+**Key achievements:**
+- Reviewed Git and Docker ignore rules
+- Verified all 3 automated tests before committing
+- Created a known-good baseline for Checkpoints 001-004
+- Connected the local repository to GitHub and configured `origin/main`
+
+**Why it matters:** The project now has durable version history, an off-machine
+copy, and a safe baseline for the next engineering increment.
+
+**Next:** Begin product Checkpoint 005: register datasets and persist metadata.
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -183,4 +204,4 @@ data-platform-engineering/
 
 ---
 
-**Last updated:** 2026-08-20
+**Last updated:** 2026-08-25
