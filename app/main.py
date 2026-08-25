@@ -1,9 +1,13 @@
-from fastapi import FastAPI, HTTPException
 import logging
 import os
+from datetime import datetime
+from uuid import UUID
 
 import psycopg
 from fastapi import FastAPI, HTTPException
+from psycopg.errors import UniqueViolation
+from psycopg.rows import dict_row
+from pydantic import BaseModel, ConfigDict, Field
 
 
 logger = logging.getLogger(__name__)
@@ -16,6 +20,20 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/
 app = FastAPI()
 
 
+class DatasetCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class DatasetResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    created_at: datetime
+
+
 @app.get("/health")
 def health_check():
     """
@@ -23,8 +41,6 @@ def health_check():
     Returns 200 OK if the service is running.
     """
     return {"status": "healthy"}
-
-
 
 
 def get_db_connection():
@@ -37,7 +53,49 @@ def get_db_connection():
         return conn
     except psycopg.OperationalError as e:
         raise Exception(f"Database connection failed: {e}")
-    
+
+
+def insert_dataset(dataset: DatasetCreate):
+    """
+    Insert a dataset registration and return the created database record.
+    """
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                INSERT INTO datasets (name, description)
+                VALUES (%s, %s)
+                RETURNING id, name, description, created_at;
+                """,
+                (dataset.name, dataset.description),
+            )
+            return cursor.fetchone()
+
+
+@app.post(
+    "/datasets",
+    response_model=DatasetResponse,
+    status_code=201,
+)
+def create_dataset(dataset: DatasetCreate):
+    """
+    Register a logical dataset in PostgreSQL.
+    """
+    try:
+        return insert_dataset(dataset)
+    except UniqueViolation:
+        raise HTTPException(
+            status_code=409,
+            detail="A dataset with this name already exists.",
+        )
+    except Exception:
+        logger.exception("Dataset registration failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Dataset registration failed.",
+        )
+
+
 @app.get("/db-health")
 def db_health_check():
     """

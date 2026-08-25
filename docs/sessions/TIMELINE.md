@@ -132,6 +132,29 @@ copy, and a safe baseline for the next engineering increment.
 
 ---
 
+## **Session 006: Dataset Registration**
+
+**Date:** 2026-08-25
+**Status:** Complete
+
+**What:** Added the first platform metadata resource and persisted it in
+PostgreSQL.
+
+**Key achievements:**
+- Added the `datasets` table with generated UUIDs and timestamps
+- Added `POST /datasets` with input validation
+- Returned HTTP 409 for duplicate names and HTTP 422 for invalid names
+- Verified the real API-to-PostgreSQL path
+- Expanded the automated suite to 6 passing tests
+
+**Why it matters:** The platform now has a stable logical identity for each
+dataset. Future CSV uploads, processing runs, and curated outputs can reference
+that identity instead of depending on filenames.
+
+**Next:** Add MinIO and associate uploaded CSV objects with registered datasets.
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -140,7 +163,7 @@ copy, and a safe baseline for the next engineering increment.
 | 002 | Minimal FastAPI + health endpoint | S002 | 2026-08-19 | ✅ Complete |
 | 003 | Containerize the API | S003 | 2026-08-20 | ✅ Complete |
 | 004 | Docker Compose + PostgreSQL | S004 | 2026-08-24 | ✅ Complete |
-| 005 | Register datasets & metadata | - | - | 📋 Planned |
+| 005 | Register datasets & metadata | S006 | 2026-08-25 | ✅ Complete |
 | 006 | MinIO raw object storage | - | - | 📋 Planned |
 | 007 | CSV-to-Parquet with DuckDB | - | - | 📋 Planned |
 | 008 | Track runs & validation | - | - | 📋 Planned |
@@ -180,16 +203,17 @@ data-platform-engineering/
 ```
 
 **What works now:**
-- Local FastAPI app with `/health` endpoint
-- Automated tests
+- Local FastAPI app with `/health` and `/db-health` endpoints
+- PostgreSQL metadata storage under Docker Compose
+- Dataset registration through `POST /datasets`
+- Validation and duplicate-name protection
+- Six automated tests
 - Docker image builds and runs
-- Container responds to HTTP requests
 
 **What's next:**
-- Add PostgreSQL for metadata
-- Use Docker Compose to orchestrate both services
-- Implement dataset registration API
-- Add data transformation pipeline
+- Add MinIO for raw object storage
+- Upload CSV files against registered dataset IDs
+- Add data transformation and run tracking
 
 ---
 
@@ -197,11 +221,11 @@ data-platform-engineering/
 
 1. **Vertical slice** (sessions 1–3): Prove one simple feature works end-to-end
 2. **Multi-service orchestration** (session 4): Add database, run together
-3. **Data pipeline** (sessions 5–7): Implement the core ETL logic
+3. **Data pipeline** (sessions 6–8): Implement registration, storage, and core ETL logic
 4. **Observability** (session 8): Add monitoring and logging
 5. **Automation** (session 9): GitHub Actions, CI/CD
 6. **Production readiness** (session 10+): Scale, optimize, document
 
 ---
 
-**Last updated:** 2026-08-25
+**Last updated:** 2026-08-25 (Session 006)

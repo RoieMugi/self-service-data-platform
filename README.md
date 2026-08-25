@@ -39,7 +39,7 @@ basic platform works reliably.
 - [x] 002 - Add a minimal FastAPI service with a health endpoint.
 - [x] 003 - Containerize the API.
 - [x] 004 - Add PostgreSQL and Docker Compose health checks.
-- [ ] 005 - Register datasets and persist metadata.
+- [x] 005 - Register datasets and persist metadata.
 - [ ] 006 - Add MinIO raw object storage.
 - [ ] 007 - Execute CSV-to-Parquet processing with DuckDB.
 - [ ] 008 - Track runs, validation results, and failures.
@@ -53,11 +53,19 @@ basic platform works reliably.
 
 ## Current status
 
-Checkpoint 004 is complete. FastAPI and PostgreSQL now run together with Docker
-Compose, including database readiness and application-level database health
-checks. The completed work is versioned locally and published to the private
-GitHub repository `RoieMugi/self-service-data-platform`. The next engineering
-increment is dataset registration with persisted metadata.
+Checkpoint 005 is complete. The platform can register logical datasets through
+`POST /datasets` and persist their metadata in PostgreSQL with generated UUIDs,
+timestamps, validation, and duplicate-name protection. The next engineering
+increment is MinIO raw object storage and CSV uploads associated with registered
+datasets.
+
+## Recent activity (2026-08-25, Session 006)
+
+- Added the PostgreSQL `datasets` schema and Docker Compose initialization mount.
+- Added `POST /datasets` with validated request and response models.
+- Verified real database persistence, duplicate protection, and invalid-input
+  handling.
+- Expanded the automated suite to 6 passing tests.
 
 ## Recent activity (2026-08-25)
 
@@ -65,8 +73,8 @@ increment is dataset registration with persisted metadata.
 - Verified the baseline with 3 passing automated tests.
 - Published `main` to the private GitHub repository
   `RoieMugi/self-service-data-platform`.
-- Recorded the version-control work as Session 005; product Checkpoint 005
-  remains dataset registration.
+- Recorded the version-control work as Session 005 while keeping product
+  checkpoint numbering separate from session numbering.
 
 ## Recent activity (2026-08-20)
 
