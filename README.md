@@ -40,7 +40,7 @@ basic platform works reliably.
 - [x] 003 - Containerize the API.
 - [x] 004 - Add PostgreSQL and Docker Compose health checks.
 - [x] 005 - Register datasets and persist metadata.
-- [ ] 006 - Add MinIO raw object storage.
+- [x] 006 - Add MinIO raw object storage.
 - [ ] 007 - Execute CSV-to-Parquet processing with DuckDB.
 - [ ] 008 - Track runs, validation results, and failures.
 - [ ] 009 - Add automated tests and GitHub Actions.
@@ -53,11 +53,16 @@ basic platform works reliably.
 
 ## Current status
 
-Checkpoint 005 is complete. The platform can register logical datasets through
-`POST /datasets` and persist their metadata in PostgreSQL with generated UUIDs,
-timestamps, validation, and duplicate-name protection. The next engineering
-increment is MinIO raw object storage and CSV uploads associated with registered
-datasets.
+Checkpoint 006 is complete. The platform can accept CSV uploads for registered
+datasets, store their bytes in MinIO, and persist object metadata in PostgreSQL.
+The next engineering increment is CSV-to-Parquet processing with DuckDB.
+
+## Recent activity (2026-08-26, Session 007)
+
+- Added persistent MinIO object storage and an idempotent `raw` bucket initializer.
+- Added `POST /datasets/{dataset_id}/uploads` with CSV and size validation.
+- Added upload metadata persistence and compensating cleanup for partial failures.
+- Verified a live upload in MinIO and PostgreSQL and expanded the suite to 12 tests.
 
 ## Recent activity (2026-08-25, Session 006)
 

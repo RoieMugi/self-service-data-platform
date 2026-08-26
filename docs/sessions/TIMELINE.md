@@ -155,6 +155,30 @@ that identity instead of depending on filenames.
 
 ---
 
+## **Session 007: MinIO Raw Object Storage**
+
+**Date:** 2026-08-26
+**Status:** Complete
+
+**What:** Added persistent raw CSV storage and connected uploads to registered
+datasets.
+
+**Key achievements:**
+- Added MinIO and an idempotent `raw` bucket initializer to Docker Compose
+- Added the `uploads` metadata table and dataset relationship
+- Added `POST /datasets/{dataset_id}/uploads`
+- Added CSV validation and compensating cleanup for partial failures
+- Verified a live upload in MinIO and PostgreSQL
+- Expanded the automated suite to 12 passing tests
+
+**Why it matters:** The platform now owns both logical dataset metadata and the
+physical raw files associated with it, completing the ingestion boundary needed
+before processing can begin.
+
+**Next:** Transform uploaded CSV objects into curated Parquet with DuckDB.
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -164,7 +188,7 @@ that identity instead of depending on filenames.
 | 003 | Containerize the API | S003 | 2026-08-20 | ✅ Complete |
 | 004 | Docker Compose + PostgreSQL | S004 | 2026-08-24 | ✅ Complete |
 | 005 | Register datasets & metadata | S006 | 2026-08-25 | ✅ Complete |
-| 006 | MinIO raw object storage | - | - | 📋 Planned |
+| 006 | MinIO raw object storage | S007 | 2026-08-26 | Complete |
 | 007 | CSV-to-Parquet with DuckDB | - | - | 📋 Planned |
 | 008 | Track runs & validation | - | - | 📋 Planned |
 | 009 | Automated tests & GitHub Actions | - | - | 📋 Planned |
@@ -179,6 +203,9 @@ that identity instead of depending on filenames.
 ✅ **Reproducible environment:** The Dockerfile and requirements.txt ensure consistent setup across machines.
 
 ✅ **Foundation for multi-service platform:** The API and PostgreSQL now run together under Docker Compose with health checks.
+
+✅ **Raw ingestion path:** Registered datasets can receive CSV uploads whose bytes
+are persisted in MinIO and whose metadata is tracked in PostgreSQL.
 
 ---
 
@@ -211,9 +238,8 @@ data-platform-engineering/
 - Docker image builds and runs
 
 **What's next:**
-- Add MinIO for raw object storage
-- Upload CSV files against registered dataset IDs
-- Add data transformation and run tracking
+- Transform uploaded CSV files into curated Parquet with DuckDB
+- Add processing-run tracking and validation results
 
 ---
 
@@ -228,4 +254,4 @@ data-platform-engineering/
 
 ---
 
-**Last updated:** 2026-08-25 (Session 006)
+**Last updated:** 2026-08-26 (Session 007)
