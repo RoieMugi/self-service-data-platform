@@ -1,16 +1,18 @@
 import logging
 import os
 from datetime import datetime
+from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import UUID, uuid4
-from minio import Minio
 
-
+import duckdb
 import psycopg
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from minio import Minio
 from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from pydantic import BaseModel, ConfigDict, Field
-from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "platform_minio")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "platform_minio_password")
-MINIO_BUCKET = os.getenv("MINIO_BUCKET", "raw")
+MINIO_RAW_BUCKET = os.getenv("MINIO_RAW_BUCKET", "raw")
+MINIO_CURATED_BUCKET = os.getenv("MINIO_CURATED_BUCKET", "curated")
 MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
 
 # Max size for files- for this project I placed limitations
@@ -42,6 +45,7 @@ class DatasetResponse(BaseModel):
     description: str | None
     created_at: datetime
 
+
 class UploadResponse(BaseModel):
     id: UUID
     dataset_id: UUID
@@ -50,6 +54,15 @@ class UploadResponse(BaseModel):
     content_type: str
     size_bytes: int
     created_at: datetime
+
+
+class ProcessingResponse(BaseModel):
+    upload_id: UUID
+    dataset_id: UUID
+    object_key: str
+    format: str
+    row_count: int
+
 
 @app.get("/health")
 def health_check():
@@ -134,6 +147,73 @@ def get_minio_client():
         secure=MINIO_SECURE,
     )
 
+def download_raw_object(object_key: str) -> bytes:
+    """
+    Download a raw object from MinIO and return its bytes.
+    """
+    response = get_minio_client().get_object(
+        MINIO_RAW_BUCKET,
+        object_key,
+    )
+
+    try:
+        return response.read()
+    finally:
+        response.close()
+        response.release_conn()
+
+
+def convert_csv_to_parquet(csv_content: bytes) -> tuple[bytes, int]:
+    """
+    Convert CSV bytes into Parquet bytes and return the row count.
+    """
+    csv_content = csv_content.removeprefix(b"\xef\xbb\xbf")
+
+    with TemporaryDirectory() as temporary_directory:
+        input_path = Path(temporary_directory) / "input.csv"
+        output_path = Path(temporary_directory) / "output.parquet"
+
+        input_path.write_bytes(csv_content)
+
+        with duckdb.connect() as connection:
+            connection.execute(
+                """
+                CREATE TEMP TABLE processed_data AS
+                SELECT *
+                FROM read_csv_auto(?, strict_mode = false);
+                """,
+                [str(input_path)],
+            )
+
+            row_count = connection.execute(
+                "SELECT COUNT(*) FROM processed_data;"
+            ).fetchone()[0]
+
+            connection.table("processed_data").write_parquet(
+                str(output_path)
+            )
+
+        parquet_content = output_path.read_bytes()
+
+    return parquet_content, row_count
+
+
+def upload_curated_object(
+    object_key: str,
+    parquet_content: bytes,
+) -> None:
+    """
+    Store a generated Parquet object in the curated MinIO bucket.
+    """
+    get_minio_client().put_object(
+        MINIO_CURATED_BUCKET,
+        object_key,
+        BytesIO(parquet_content),
+        length=len(parquet_content),
+        content_type="application/vnd.apache.parquet",
+    )
+
+
 def insert_upload(
     upload_id: UUID,
     dataset_id: UUID,
@@ -177,6 +257,31 @@ def insert_upload(
                 ),
             )
             return cursor.fetchone()
+
+
+def get_upload(upload_id: UUID):
+    """
+    Return metadata for one uploaded raw object.
+    """
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    dataset_id,
+                    original_filename,
+                    object_key,
+                    content_type,
+                    size_bytes,
+                    created_at
+                FROM uploads
+                WHERE id = %s;
+                """,
+                (upload_id,),
+            )
+            return cursor.fetchone()
+
 
 def read_and_validate_csv(file: UploadFile):
     """
@@ -243,7 +348,7 @@ def upload_dataset_file(
 
     try:
         minio_client.put_object(
-            MINIO_BUCKET,
+            MINIO_RAW_BUCKET,
             object_key,
             BytesIO(content),
             length=len(content),
@@ -269,7 +374,7 @@ def upload_dataset_file(
         logger.exception("Upload metadata insert failed")
 
         try:
-            minio_client.remove_object(MINIO_BUCKET, object_key)
+            minio_client.remove_object(MINIO_RAW_BUCKET, object_key)
         except Exception:
             logger.exception(
                 "Failed to remove orphaned object: %s",
@@ -280,6 +385,79 @@ def upload_dataset_file(
             status_code=500,
             detail="Upload registration failed.",
         )
+
+
+@app.post(
+    "/uploads/{upload_id}/process",
+    response_model=ProcessingResponse,
+    status_code=200,
+)
+def process_upload(upload_id: UUID):
+    """
+    Convert one raw CSV upload into curated Parquet.
+    """
+    try:
+        upload = get_upload(upload_id)
+    except Exception:
+        logger.exception("Upload lookup failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Upload lookup failed.",
+        )
+
+    if upload is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Upload not found.",
+        )
+
+    try:
+        csv_content = download_raw_object(
+            upload["object_key"]
+        )
+    except Exception:
+        logger.exception("Raw object download failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Raw object storage is unavailable.",
+        )
+
+    try:
+        parquet_content, row_count = (
+            convert_csv_to_parquet(csv_content)
+        )
+    except duckdb.Error:
+        logger.exception("CSV-to-Parquet conversion failed")
+        raise HTTPException(
+            status_code=422,
+            detail="The uploaded CSV could not be processed.",
+        )
+
+    curated_object_key = (
+        f'{upload["dataset_id"]}/'
+        f'{upload["id"]}/'
+        "data.parquet"
+    )
+
+    try:
+        upload_curated_object(
+            curated_object_key,
+            parquet_content,
+        )
+    except Exception:
+        logger.exception("Curated object upload failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Curated object storage is unavailable.",
+        )
+
+    return {
+        "upload_id": upload["id"],
+        "dataset_id": upload["dataset_id"],
+        "object_key": curated_object_key,
+        "format": "parquet",
+        "row_count": row_count,
+    }
 
 
 @app.get("/db-health")

@@ -41,7 +41,7 @@ basic platform works reliably.
 - [x] 004 - Add PostgreSQL and Docker Compose health checks.
 - [x] 005 - Register datasets and persist metadata.
 - [x] 006 - Add MinIO raw object storage.
-- [ ] 007 - Execute CSV-to-Parquet processing with DuckDB.
+- [x] 007 - Execute CSV-to-Parquet processing with DuckDB.
 - [ ] 008 - Track runs, validation results, and failures.
 - [ ] 009 - Add automated tests and GitHub Actions.
 - [ ] 010 - Add basic operational metrics and documentation.
@@ -53,9 +53,16 @@ basic platform works reliably.
 
 ## Current status
 
-Checkpoint 006 is complete. The platform can accept CSV uploads for registered
-datasets, store their bytes in MinIO, and persist object metadata in PostgreSQL.
-The next engineering increment is CSV-to-Parquet processing with DuckDB.
+Checkpoint 007 is complete. The platform can process a registered raw CSV with
+DuckDB, store curated Parquet in MinIO, and return the output location and row
+count. The next engineering increment is persistent run and validation tracking.
+
+## Recent activity (2026-08-31, Session 008)
+
+- Added synchronous `POST /uploads/{upload_id}/process` processing with DuckDB.
+- Added a curated MinIO data zone organized by dataset and upload UUIDs.
+- Added UTF-8 BOM and mixed-line-ending handling discovered through live data.
+- Verified the stored Parquet contents and expanded the suite to 20 tests.
 
 ## Recent activity (2026-08-26, Session 007)
 

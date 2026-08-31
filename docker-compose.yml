@@ -27,7 +27,8 @@ services:
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: platform_minio
       MINIO_SECRET_KEY: platform_minio_password
-      MINIO_BUCKET: raw
+      MINIO_RAW_BUCKET: raw
+      MINIO_CURATED_BUCKET: curated
       MINIO_SECURE: "false"
     depends_on:
       db:
@@ -62,6 +63,7 @@ services:
       /bin/sh -c "
       mc alias set local http://minio:9000 platform_minio platform_minio_password;
       mc mb --ignore-existing local/raw;
+      mc mb --ignore-existing local/curated;
       "
 volumes:
   postgres_data:

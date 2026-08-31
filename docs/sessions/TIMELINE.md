@@ -179,6 +179,33 @@ before processing can begin.
 
 ---
 
+## **Session 008: DuckDB CSV-to-Parquet Processing**
+
+**Date:** 2026-08-31
+**Status:** Complete
+
+**What:** Added the platform's first processing path from raw CSV to curated
+Parquet.
+
+**Key achievements:**
+- Added a curated MinIO bucket and explicit raw/curated configuration
+- Added `POST /uploads/{upload_id}/process`
+- Used PostgreSQL metadata to resolve raw MinIO objects
+- Converted CSV to Parquet synchronously with DuckDB
+- Returned curated object metadata and row counts
+- Handled UTF-8 BOM and mixed-line-ending input found during live verification
+- Verified the stored Parquet object and its three source rows
+- Expanded the automated suite to 20 passing tests
+
+**Why it matters:** The platform now does more than register and store data. It
+can turn a managed raw upload into an analytics-ready curated artifact, completing
+the core MVP transformation path.
+
+**Next:** Persist processing runs, validation outcomes, failures, and curated
+output metadata.
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -189,7 +216,7 @@ before processing can begin.
 | 004 | Docker Compose + PostgreSQL | S004 | 2026-08-24 | ✅ Complete |
 | 005 | Register datasets & metadata | S006 | 2026-08-25 | ✅ Complete |
 | 006 | MinIO raw object storage | S007 | 2026-08-26 | Complete |
-| 007 | CSV-to-Parquet with DuckDB | - | - | 📋 Planned |
+| 007 | CSV-to-Parquet with DuckDB | S008 | 2026-08-31 | Complete |
 | 008 | Track runs & validation | - | - | 📋 Planned |
 | 009 | Automated tests & GitHub Actions | - | - | 📋 Planned |
 | 010 | Observability & docs | - | - | 📋 Planned |
@@ -206,6 +233,9 @@ before processing can begin.
 
 ✅ **Raw ingestion path:** Registered datasets can receive CSV uploads whose bytes
 are persisted in MinIO and whose metadata is tracked in PostgreSQL.
+
+✅ **Curated processing path:** Raw CSV uploads can be transformed with DuckDB and
+stored as dataset-organized Parquet objects in MinIO.
 
 ---
 
@@ -234,11 +264,11 @@ data-platform-engineering/
 - PostgreSQL metadata storage under Docker Compose
 - Dataset registration through `POST /datasets`
 - Validation and duplicate-name protection
-- Six automated tests
+- Raw CSV storage and curated Parquet processing
+- 20 automated tests
 - Docker image builds and runs
 
 **What's next:**
-- Transform uploaded CSV files into curated Parquet with DuckDB
 - Add processing-run tracking and validation results
 
 ---
@@ -254,4 +284,4 @@ data-platform-engineering/
 
 ---
 
-**Last updated:** 2026-08-26 (Session 007)
+**Last updated:** 2026-08-31 (Session 008)

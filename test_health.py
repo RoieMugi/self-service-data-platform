@@ -1,11 +1,15 @@
 from datetime import datetime, timezone
-from unittest.mock import Mock
+from unittest.mock import Mock, MagicMock
 from uuid import UUID
 
 import app.main as main_module
 from app.main import app
 from fastapi.testclient import TestClient
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import duckdb
 
 client = TestClient(app)
 
@@ -392,3 +396,376 @@ def test_upload_returns_503_when_object_storage_fails(monkeypatch):
         "detail": "Object storage is unavailable.",
     }
     fake_insert_upload.assert_not_called()
+
+def test_get_upload_returns_upload_metadata(monkeypatch):
+    upload_id = UUID("cd49f308-e39e-4d87-a7f0-f72f75bde678")
+    dataset_id = UUID("a81cb365-f0a3-443a-a6ea-c077949e6207")
+
+    expected_upload = {
+        "id": upload_id,
+        "dataset_id": dataset_id,
+        "original_filename": "sales.csv",
+        "object_key": f"{dataset_id}/{upload_id}/sales.csv",
+        "content_type": "text/csv",
+        "size_bytes": 22,
+    }
+
+    fake_cursor = MagicMock()
+    fake_cursor.fetchone.return_value = expected_upload
+
+    fake_connection = MagicMock()
+    fake_connection.__enter__.return_value = fake_connection
+    fake_connection.cursor.return_value.__enter__.return_value = fake_cursor
+
+    monkeypatch.setattr(
+        main_module,
+        "get_db_connection",
+        lambda: fake_connection,
+    )
+
+    result = main_module.get_upload(upload_id)
+
+    assert result == expected_upload
+    fake_cursor.execute.assert_called_once()
+
+    _, parameters = fake_cursor.execute.call_args.args
+    assert parameters == (upload_id,)
+
+def test_download_raw_object_returns_bytes_and_releases_connection(
+    monkeypatch,
+):
+    object_key = "dataset-id/upload-id/sales.csv"
+    csv_content = b"order_id,amount\n1,10\n"
+
+    fake_response = Mock()
+    fake_response.read.return_value = csv_content
+
+    fake_minio_client = Mock()
+    fake_minio_client.get_object.return_value = fake_response
+
+    monkeypatch.setattr(
+        main_module,
+        "get_minio_client",
+        lambda: fake_minio_client,
+    )
+
+    result = main_module.download_raw_object(object_key)
+
+    assert result == csv_content
+
+    fake_minio_client.get_object.assert_called_once_with(
+        "raw",
+        object_key,
+    )
+    fake_response.read.assert_called_once_with()
+    fake_response.close.assert_called_once_with()
+    fake_response.release_conn.assert_called_once_with()
+
+def test_convert_csv_to_parquet_returns_valid_parquet():
+    csv_content = (
+    b"\xef\xbb\xbf"
+    b"order_id,amount\n"
+    b"1,10\n"
+    b"2,25\r\n"
+)
+
+    parquet_content, row_count = (
+        main_module.convert_csv_to_parquet(csv_content)
+    )
+
+    assert row_count == 2
+    assert parquet_content.startswith(b"PAR1")
+
+    with TemporaryDirectory() as temporary_directory:
+        parquet_path = (
+            Path(temporary_directory) / "result.parquet"
+        )
+        parquet_path.write_bytes(parquet_content)
+
+        with duckdb.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT order_id, amount
+                FROM read_parquet(?)
+                ORDER BY order_id;
+                """,
+                [str(parquet_path)],
+            ).fetchall()
+
+    assert rows == [
+        (1, 10),
+        (2, 25),
+    ]
+
+def test_upload_curated_object_stores_parquet_in_curated_bucket(
+    monkeypatch,
+):
+    object_key = "dataset-id/upload-id/data.parquet"
+    parquet_content = b"PAR1simulated-parquet-content"
+
+    fake_minio_client = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "get_minio_client",
+        lambda: fake_minio_client,
+    )
+
+    main_module.upload_curated_object(
+        object_key,
+        parquet_content,
+    )
+
+    fake_minio_client.put_object.assert_called_once()
+
+    positional_arguments = (
+        fake_minio_client.put_object.call_args.args
+    )
+    keyword_arguments = (
+        fake_minio_client.put_object.call_args.kwargs
+    )
+
+    bucket, stored_key, data_stream = positional_arguments
+
+    assert bucket == "curated"
+    assert stored_key == object_key
+    assert data_stream.read() == parquet_content
+
+    assert keyword_arguments == {
+        "length": len(parquet_content),
+        "content_type": "application/vnd.apache.parquet",
+    }
+
+def test_process_upload_returns_curated_result(monkeypatch):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    dataset_id = UUID(
+        "a81cb365-f0a3-443a-a6ea-c077949e6207"
+    )
+
+    raw_object_key = (
+        f"{dataset_id}/{upload_id}/sales.csv"
+    )
+    curated_object_key = (
+        f"{dataset_id}/{upload_id}/data.parquet"
+    )
+
+    csv_content = b"order_id,amount\n1,10\n"
+    parquet_content = b"PAR1simulated-parquet"
+
+    monkeypatch.setattr(
+        main_module,
+        "get_upload",
+        lambda requested_id: {
+            "id": requested_id,
+            "dataset_id": dataset_id,
+            "object_key": raw_object_key,
+        },
+    )
+
+    fake_download = Mock(return_value=csv_content)
+    fake_conversion = Mock(
+        return_value=(parquet_content, 1)
+    )
+    fake_curated_upload = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "download_raw_object",
+        fake_download,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "convert_csv_to_parquet",
+        fake_conversion,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "upload_curated_object",
+        fake_curated_upload,
+    )
+
+    response = client.post(
+        f"/uploads/{upload_id}/process"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "upload_id": str(upload_id),
+        "dataset_id": str(dataset_id),
+        "object_key": curated_object_key,
+        "format": "parquet",
+        "row_count": 1,
+    }
+
+    fake_download.assert_called_once_with(
+        raw_object_key
+    )
+    fake_conversion.assert_called_once_with(
+        csv_content
+    )
+    fake_curated_upload.assert_called_once_with(
+        curated_object_key,
+        parquet_content,
+    )
+
+def test_process_upload_returns_404_when_upload_does_not_exist(
+    monkeypatch,
+):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+
+    fake_download = Mock()
+    fake_conversion = Mock()
+    fake_curated_upload = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "get_upload",
+        lambda requested_id: None,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "download_raw_object",
+        fake_download,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "convert_csv_to_parquet",
+        fake_conversion,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "upload_curated_object",
+        fake_curated_upload,
+    )
+
+    response = client.post(
+        f"/uploads/{upload_id}/process"
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Upload not found.",
+    }
+
+    fake_download.assert_not_called()
+    fake_conversion.assert_not_called()
+    fake_curated_upload.assert_not_called()
+
+def test_process_upload_returns_422_for_unprocessable_csv(
+    monkeypatch,
+):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    dataset_id = UUID(
+        "a81cb365-f0a3-443a-a6ea-c077949e6207"
+    )
+    raw_object_key = (
+        f"{dataset_id}/{upload_id}/broken.csv"
+    )
+
+    fake_curated_upload = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "get_upload",
+        lambda requested_id: {
+            "id": requested_id,
+            "dataset_id": dataset_id,
+            "object_key": raw_object_key,
+        },
+    )
+    monkeypatch.setattr(
+        main_module,
+        "download_raw_object",
+        lambda object_key: b"invalid csv content",
+    )
+
+    def fail_conversion(csv_content):
+        raise duckdb.InvalidInputException(
+            "simulated CSV parsing failure"
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "convert_csv_to_parquet",
+        fail_conversion,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "upload_curated_object",
+        fake_curated_upload,
+    )
+
+    response = client.post(
+        f"/uploads/{upload_id}/process"
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "The uploaded CSV could not be processed.",
+    }
+
+    fake_curated_upload.assert_not_called()
+
+def test_process_upload_returns_503_when_curated_upload_fails(
+    monkeypatch,
+):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    dataset_id = UUID(
+        "a81cb365-f0a3-443a-a6ea-c077949e6207"
+    )
+    raw_object_key = (
+        f"{dataset_id}/{upload_id}/sales.csv"
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_upload",
+        lambda requested_id: {
+            "id": requested_id,
+            "dataset_id": dataset_id,
+            "object_key": raw_object_key,
+        },
+    )
+    monkeypatch.setattr(
+        main_module,
+        "download_raw_object",
+        lambda object_key: b"order_id,amount\n1,10\n",
+    )
+    monkeypatch.setattr(
+        main_module,
+        "convert_csv_to_parquet",
+        lambda csv_content: (
+            b"PAR1simulated-parquet",
+            1,
+        ),
+    )
+
+    def fail_curated_upload(object_key, parquet_content):
+        raise Exception(
+            "simulated object storage failure"
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "upload_curated_object",
+        fail_curated_upload,
+    )
+
+    response = client.post(
+        f"/uploads/{upload_id}/process"
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": (
+            "Curated object storage is unavailable."
+        ),
+    }
