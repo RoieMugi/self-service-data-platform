@@ -206,6 +206,28 @@ output metadata.
 
 ---
 
+## **Session 009: Processing Run and Validation Tracking**
+
+**Date:** 2026-09-01
+**Status:** Complete
+
+**What:** Added durable processing-run history and validation outcomes.
+
+**Key achievements:**
+- Added database-enforced run states and validation constraints
+- Added versioned migrations for the existing PostgreSQL database
+- Tracked successful and failed processing attempts
+- Added `GET /processing-runs/{run_id}`
+- Verified success and validation failure against live services
+- Expanded the automated suite to 27 passing tests
+
+**Why it matters:** Processing is now inspectable after the original request.
+Users can retrieve durable status, timing, output, validation, and failure data.
+
+**Next:** Automate repository verification with GitHub Actions.
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -217,7 +239,7 @@ output metadata.
 | 005 | Register datasets & metadata | S006 | 2026-08-25 | ✅ Complete |
 | 006 | MinIO raw object storage | S007 | 2026-08-26 | Complete |
 | 007 | CSV-to-Parquet with DuckDB | S008 | 2026-08-31 | Complete |
-| 008 | Track runs & validation | - | - | 📋 Planned |
+| 008 | Track runs & validation | S009 | 2026-09-01 | Complete |
 | 009 | Automated tests & GitHub Actions | - | - | 📋 Planned |
 | 010 | Observability & docs | - | - | 📋 Planned |
 
@@ -265,11 +287,13 @@ data-platform-engineering/
 - Dataset registration through `POST /datasets`
 - Validation and duplicate-name protection
 - Raw CSV storage and curated Parquet processing
-- 20 automated tests
+- 27 automated tests
 - Docker image builds and runs
 
 **What's next:**
-- Add processing-run tracking and validation results
+- Add automated verification with GitHub Actions
+- Later, separate processing into a queued worker and add event streaming when
+  multiple platform consumers need the same lifecycle events
 
 ---
 
@@ -278,10 +302,13 @@ data-platform-engineering/
 1. **Vertical slice** (sessions 1–3): Prove one simple feature works end-to-end
 2. **Multi-service orchestration** (session 4): Add database, run together
 3. **Data pipeline** (sessions 6–8): Implement registration, storage, and core ETL logic
-4. **Observability** (session 8): Add monitoring and logging
-5. **Automation** (session 9): GitHub Actions, CI/CD
-6. **Production readiness** (session 10+): Scale, optimize, document
+4. **Run visibility** (session 9): Persist processing and validation outcomes
+5. **Automation** (checkpoint 009): GitHub Actions and CI
+6. **Observability** (checkpoint 010): Metrics and operational documentation
+7. **Event-driven evolution** (post-MVP): Add queued workers, then publish
+   replayable platform events for quality, lineage, catalog, metrics, and
+   notification consumers
 
 ---
 
-**Last updated:** 2026-08-31 (Session 008)
+**Last updated:** 2026-09-01 (Session 009)

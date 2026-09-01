@@ -26,6 +26,7 @@ These records are part of the project, not temporary notes.
 | [006](006-dataset-registration.md) | 2026-08-25 | Register datasets and persist metadata | Complete |
 | [007](007-minio-raw-storage.md) | 2026-08-26 | Store CSV uploads in MinIO | Complete |
 | [008](008-duckdb-csv-to-parquet.md) | 2026-08-31 | Convert raw CSV to curated Parquet | Complete |
+| [009](009-processing-run-tracking.md) | 2026-09-01 | Track processing runs and validation | Complete |
 
 ## Quick Links
 

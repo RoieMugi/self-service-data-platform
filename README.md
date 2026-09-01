@@ -25,6 +25,21 @@ The first version will run locally with Docker Compose. Kubernetes, Terraform,
 Kafka, Spark, authentication, and a web UI are intentionally deferred until the
 basic platform works reliably.
 
+## Post-MVP direction
+
+After the synchronous MVP is reliable, evolve processing in two stages:
+
+1. Introduce a lightweight message queue and worker so processing can run
+   asynchronously while PostgreSQL remains the source of truth for run state.
+2. Introduce durable event streaming when several independent platform
+   components need to react to events such as `upload.stored`,
+   `processing.succeeded`, and `processing.failed`.
+
+RabbitMQ is a candidate for distributing processing jobs. Kafka or a
+Kafka-compatible platform such as Redpanda is a candidate for replayable event
+streams. The final choice will be made when the platform has concrete consumers
+such as data quality, lineage, catalog, metrics, or notifications.
+
 ## How we will work
 
 - Build one small, testable increment at a time.
@@ -42,9 +57,11 @@ basic platform works reliably.
 - [x] 005 - Register datasets and persist metadata.
 - [x] 006 - Add MinIO raw object storage.
 - [x] 007 - Execute CSV-to-Parquet processing with DuckDB.
-- [ ] 008 - Track runs, validation results, and failures.
+- [x] 008 - Track runs, validation results, and failures.
 - [ ] 009 - Add automated tests and GitHub Actions.
 - [ ] 010 - Add basic operational metrics and documentation.
+- [ ] Post-MVP - Move processing to an asynchronous worker and job queue.
+- [ ] Post-MVP - Publish durable platform events for independent consumers.
 
 ## Documentation
 
@@ -53,9 +70,18 @@ basic platform works reliably.
 
 ## Current status
 
-Checkpoint 007 is complete. The platform can process a registered raw CSV with
-DuckDB, store curated Parquet in MinIO, and return the output location and row
-count. The next engineering increment is persistent run and validation tracking.
+Checkpoint 008 is complete. The platform persistently tracks processing runs,
+validation outcomes, curated output metadata, row counts, and safe failure
+summaries. The next engineering increment is automated verification with GitHub
+Actions.
+
+## Recent activity (2026-09-01, Session 009)
+
+- Added persistent processing-run lifecycle tracking in PostgreSQL.
+- Added database-enforced state and validation constraints.
+- Added `GET /processing-runs/{run_id}` for durable result inspection.
+- Verified successful and validation-failed runs against live services.
+- Expanded the automated suite to 27 passing tests.
 
 ## Recent activity (2026-08-31, Session 008)
 

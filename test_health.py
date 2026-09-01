@@ -431,6 +431,48 @@ def test_get_upload_returns_upload_metadata(monkeypatch):
     _, parameters = fake_cursor.execute.call_args.args
     assert parameters == (upload_id,)
 
+def test_create_processing_run_inserts_running_record(
+    monkeypatch,
+):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+
+    expected_run = {
+        "id": run_id,
+        "upload_id": upload_id,
+        "status": "running",
+    }
+
+    fake_cursor = MagicMock()
+    fake_cursor.fetchone.return_value = expected_run
+
+    fake_connection = MagicMock()
+    fake_connection.__enter__.return_value = (
+        fake_connection
+    )
+    fake_connection.cursor.return_value.__enter__.return_value = (
+        fake_cursor
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_db_connection",
+        lambda: fake_connection,
+    )
+
+    result = main_module.create_processing_run(upload_id)
+
+    assert result == expected_run
+    fake_cursor.execute.assert_called_once()
+
+    _, parameters = fake_cursor.execute.call_args.args
+    assert parameters == (upload_id,)
+
+
 def test_download_raw_object_returns_bytes_and_releases_connection(
     monkeypatch,
 ):
@@ -540,6 +582,9 @@ def test_process_upload_returns_curated_result(monkeypatch):
     upload_id = UUID(
         "cd49f308-e39e-4d87-a7f0-f72f75bde678"
     )
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
     dataset_id = UUID(
         "a81cb365-f0a3-443a-a6ea-c077949e6207"
     )
@@ -564,11 +609,36 @@ def test_process_upload_returns_curated_result(monkeypatch):
         },
     )
 
+    fake_create_run = Mock(
+        return_value={
+            "id": run_id,
+            "upload_id": upload_id,
+            "status": "running",
+        }
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "create_processing_run",
+        fake_create_run,
+    )
+
     fake_download = Mock(return_value=csv_content)
     fake_conversion = Mock(
         return_value=(parquet_content, 1)
     )
     fake_curated_upload = Mock()
+
+    fake_complete_run = Mock(
+        return_value={
+            "id": run_id,
+            "upload_id": upload_id,
+            "status": "succeeded",
+            "row_count": 1,
+            "curated_object_key": curated_object_key,
+            "validation_status": "passed",
+        }
+    )
 
     monkeypatch.setattr(
         main_module,
@@ -586,6 +656,12 @@ def test_process_upload_returns_curated_result(monkeypatch):
         fake_curated_upload,
     )
 
+    monkeypatch.setattr(
+        main_module,
+        "complete_processing_run",
+        fake_complete_run,
+    )
+
     response = client.post(
         f"/uploads/{upload_id}/process"
     )
@@ -597,6 +673,9 @@ def test_process_upload_returns_curated_result(monkeypatch):
         "object_key": curated_object_key,
         "format": "parquet",
         "row_count": 1,
+        "run_id": str(run_id),
+        "status": "succeeded",
+        "validation_status": "passed",
     }
 
     fake_download.assert_called_once_with(
@@ -609,6 +688,15 @@ def test_process_upload_returns_curated_result(monkeypatch):
         curated_object_key,
         parquet_content,
     )
+
+    fake_create_run.assert_called_once_with(upload_id)
+
+    fake_complete_run.assert_called_once_with(
+        run_id=run_id,
+        row_count=1,
+        curated_object_key=curated_object_key,
+    )
+
 
 def test_process_upload_returns_404_when_upload_does_not_exist(
     monkeypatch,
@@ -661,6 +749,9 @@ def test_process_upload_returns_422_for_unprocessable_csv(
     upload_id = UUID(
         "cd49f308-e39e-4d87-a7f0-f72f75bde678"
     )
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
     dataset_id = UUID(
         "a81cb365-f0a3-443a-a6ea-c077949e6207"
     )
@@ -678,6 +769,25 @@ def test_process_upload_returns_422_for_unprocessable_csv(
             "dataset_id": dataset_id,
             "object_key": raw_object_key,
         },
+    )
+    fake_create_run = Mock(
+        return_value={
+            "id": run_id,
+            "upload_id": upload_id,
+            "status": "running",
+        }
+    )
+    fake_record_failure = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "create_processing_run",
+        fake_create_run,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "try_to_record_processing_failure",
+        fake_record_failure,
     )
     monkeypatch.setattr(
         main_module,
@@ -712,11 +822,25 @@ def test_process_upload_returns_422_for_unprocessable_csv(
 
     fake_curated_upload.assert_not_called()
 
+    fake_create_run.assert_called_once_with(upload_id)
+
+    fake_record_failure.assert_called_once_with(
+        run_id=run_id,
+        error_message=(
+            "The uploaded CSV could not be processed."
+        ),
+        validation_failed=True,
+    )
+
+
 def test_process_upload_returns_503_when_curated_upload_fails(
     monkeypatch,
 ):
     upload_id = UUID(
         "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
     )
     dataset_id = UUID(
         "a81cb365-f0a3-443a-a6ea-c077949e6207"
@@ -734,6 +858,27 @@ def test_process_upload_returns_503_when_curated_upload_fails(
             "object_key": raw_object_key,
         },
     )
+
+    fake_create_run = Mock(
+        return_value={
+            "id": run_id,
+            "upload_id": upload_id,
+            "status": "running",
+        }
+    )
+    fake_record_failure = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "create_processing_run",
+        fake_create_run,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "try_to_record_processing_failure",
+        fake_record_failure,
+    )
+
     monkeypatch.setattr(
         main_module,
         "download_raw_object",
@@ -769,3 +914,299 @@ def test_process_upload_returns_503_when_curated_upload_fails(
             "Curated object storage is unavailable."
         ),
     }
+
+    fake_create_run.assert_called_once_with(upload_id)
+
+    fake_record_failure.assert_called_once_with(
+        run_id=run_id,
+        error_message=(
+            "Curated object storage is unavailable."
+        ),
+    )
+
+def test_complete_processing_run_updates_success_fields(
+    monkeypatch,
+):
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    curated_object_key = (
+        "dataset-id/upload-id/data.parquet"
+    )
+
+    expected_run = {
+        "id": run_id,
+        "status": "succeeded",
+        "row_count": 42,
+        "curated_object_key": curated_object_key,
+        "validation_status": "passed",
+    }
+
+    fake_cursor = MagicMock()
+    fake_cursor.fetchone.return_value = expected_run
+
+    fake_connection = MagicMock()
+    fake_connection.__enter__.return_value = (
+        fake_connection
+    )
+    fake_connection.cursor.return_value.__enter__.return_value = (
+        fake_cursor
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_db_connection",
+        lambda: fake_connection,
+    )
+
+    result = main_module.complete_processing_run(
+        run_id=run_id,
+        row_count=42,
+        curated_object_key=curated_object_key,
+    )
+
+    assert result == expected_run
+    fake_cursor.execute.assert_called_once()
+
+    _, parameters = fake_cursor.execute.call_args.args
+    assert parameters == (
+        42,
+        curated_object_key,
+        run_id,
+    )
+
+def test_fail_processing_run_records_validation_failure(
+    monkeypatch,
+):
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    error_message = (
+        "The uploaded CSV could not be processed."
+    )
+
+    expected_run = {
+        "id": run_id,
+        "status": "failed",
+        "validation_status": "failed",
+        "error_message": error_message,
+    }
+
+    fake_cursor = MagicMock()
+    fake_cursor.fetchone.return_value = expected_run
+
+    fake_connection = MagicMock()
+    fake_connection.__enter__.return_value = (
+        fake_connection
+    )
+    fake_connection.cursor.return_value.__enter__.return_value = (
+        fake_cursor
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_db_connection",
+        lambda: fake_connection,
+    )
+
+    result = main_module.fail_processing_run(
+        run_id=run_id,
+        error_message=error_message,
+        validation_failed=True,
+    )
+
+    assert result == expected_run
+    fake_cursor.execute.assert_called_once()
+
+    _, parameters = fake_cursor.execute.call_args.args
+    assert parameters == (
+        "failed",
+        error_message,
+        run_id,
+    )
+
+def test_fail_processing_run_leaves_validation_unknown(
+    monkeypatch,
+):
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    error_message = (
+        "Curated object storage is unavailable."
+    )
+
+    expected_run = {
+        "id": run_id,
+        "status": "failed",
+        "validation_status": None,
+        "error_message": error_message,
+    }
+
+    fake_cursor = MagicMock()
+    fake_cursor.fetchone.return_value = expected_run
+
+    fake_connection = MagicMock()
+    fake_connection.__enter__.return_value = (
+        fake_connection
+    )
+    fake_connection.cursor.return_value.__enter__.return_value = (
+        fake_cursor
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_db_connection",
+        lambda: fake_connection,
+    )
+
+    result = main_module.fail_processing_run(
+        run_id=run_id,
+        error_message=error_message,
+    )
+
+    assert result == expected_run
+    fake_cursor.execute.assert_called_once()
+
+    _, parameters = fake_cursor.execute.call_args.args
+    assert parameters == (
+        None,
+        error_message,
+        run_id,
+    )
+
+
+def test_read_processing_run_returns_run(monkeypatch):
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    started_at = datetime(
+        2026,
+        9,
+        1,
+        10,
+        0,
+        0,
+        tzinfo=timezone.utc,
+    )
+    completed_at = datetime(
+        2026,
+        9,
+        1,
+        10,
+        0,
+        5,
+        tzinfo=timezone.utc,
+    )
+
+    fake_get_run = Mock(
+        return_value={
+            "id": run_id,
+            "upload_id": upload_id,
+            "status": "succeeded",
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "row_count": 42,
+            "curated_object_key": (
+                "dataset-id/upload-id/data.parquet"
+            ),
+            "validation_status": "passed",
+            "error_message": None,
+        }
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_processing_run",
+        fake_get_run,
+    )
+
+    response = client.get(
+        f"/processing-runs/{run_id}"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": str(run_id),
+        "upload_id": str(upload_id),
+        "status": "succeeded",
+        "started_at": "2026-09-01T10:00:00Z",
+        "completed_at": "2026-09-01T10:00:05Z",
+        "row_count": 42,
+        "curated_object_key": (
+            "dataset-id/upload-id/data.parquet"
+        ),
+        "validation_status": "passed",
+        "error_message": None,
+    }
+
+    fake_get_run.assert_called_once_with(run_id)
+
+def test_read_processing_run_returns_404_when_missing(
+    monkeypatch,
+):
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+
+    fake_get_run = Mock(return_value=None)
+
+    monkeypatch.setattr(
+        main_module,
+        "get_processing_run",
+        fake_get_run,
+    )
+
+    response = client.get(
+        f"/processing-runs/{run_id}"
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Processing run not found.",
+    }
+
+    fake_get_run.assert_called_once_with(run_id)
+
+def test_get_processing_run_returns_database_record(
+    monkeypatch,
+):
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+
+    expected_run = {
+        "id": run_id,
+        "upload_id": upload_id,
+        "status": "running",
+    }
+
+    fake_cursor = MagicMock()
+    fake_cursor.fetchone.return_value = expected_run
+
+    fake_connection = MagicMock()
+    fake_connection.__enter__.return_value = (
+        fake_connection
+    )
+    fake_connection.cursor.return_value.__enter__.return_value = (
+        fake_cursor
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_db_connection",
+        lambda: fake_connection,
+    )
+
+    result = main_module.get_processing_run(run_id)
+
+    assert result == expected_run
+    fake_cursor.execute.assert_called_once()
+
+    _, parameters = fake_cursor.execute.call_args.args
+    assert parameters == (run_id,)

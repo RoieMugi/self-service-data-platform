@@ -198,6 +198,18 @@ Example architecture:
 
 Eventually extend the platform with AI capabilities.
 
+Before that extension, evolve the batch platform toward event-driven
+architecture:
+
+1. Persist processing runs and their state transitions in PostgreSQL.
+2. Separate API requests from execution with a lightweight job queue and worker.
+3. Add durable event streaming when quality, lineage, catalog, metrics, and
+   notification consumers need to react independently.
+
+RabbitMQ is a candidate for work distribution. Kafka or Redpanda is a candidate
+for retained, replayable platform events. PostgreSQL remains the authoritative
+store for current run state.
+
 Possible additions:
 
 - LLM Gateway

@@ -57,11 +57,26 @@ class UploadResponse(BaseModel):
 
 
 class ProcessingResponse(BaseModel):
+    run_id: UUID
     upload_id: UUID
     dataset_id: UUID
+    status: str
     object_key: str
     format: str
     row_count: int
+    validation_status: str
+
+
+class ProcessingRunResponse(BaseModel):
+    id: UUID
+    upload_id: UUID
+    status: str
+    started_at: datetime
+    completed_at: datetime | None
+    row_count: int | None
+    curated_object_key: str | None
+    validation_status: str | None
+    error_message: str | None
 
 
 @app.get("/health")
@@ -283,6 +298,145 @@ def get_upload(upload_id: UUID):
             return cursor.fetchone()
 
 
+def create_processing_run(upload_id: UUID):
+    """
+    Create and return a running processing record.
+    """
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                INSERT INTO processing_runs (
+                    upload_id,
+                    status
+                )
+                VALUES (%s, 'running')
+                RETURNING
+                    id,
+                    upload_id,
+                    status,
+                    started_at;
+                """,
+                (upload_id,),
+            )
+            return cursor.fetchone()
+
+
+def complete_processing_run(
+    run_id: UUID,
+    row_count: int,
+    curated_object_key: str,
+):
+    """
+    Mark a running processing record as successfully completed.
+    """
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                UPDATE processing_runs
+                SET
+                    status = 'succeeded',
+                    completed_at = CURRENT_TIMESTAMP,
+                    row_count = %s,
+                    curated_object_key = %s,
+                    validation_status = 'passed',
+                    error_message = NULL
+                WHERE id = %s
+                  AND status = 'running'
+                RETURNING
+                    id,
+                    upload_id,
+                    status,
+                    started_at,
+                    completed_at,
+                    row_count,
+                    curated_object_key,
+                    validation_status,
+                    error_message;
+                """,
+                (
+                    row_count,
+                    curated_object_key,
+                    run_id,
+                ),
+            )
+            return cursor.fetchone()
+
+
+def fail_processing_run(
+    run_id: UUID,
+    error_message: str,
+    validation_failed: bool = False,
+):
+    """
+    Mark a running processing record as failed.
+    """
+    validation_status = (
+        "failed" if validation_failed else None
+    )
+
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                UPDATE processing_runs
+                SET
+                    status = 'failed',
+                    completed_at = CURRENT_TIMESTAMP,
+                    row_count = NULL,
+                    curated_object_key = NULL,
+                    validation_status = %s,
+                    error_message = %s
+                WHERE id = %s
+                  AND status = 'running'
+                RETURNING
+                    id,
+                    upload_id,
+                    status,
+                    started_at,
+                    completed_at,
+                    row_count,
+                    curated_object_key,
+                    validation_status,
+                    error_message;
+                """,
+                (
+                    validation_status,
+                    error_message,
+                    run_id,
+                ),
+            )
+            return cursor.fetchone()
+
+
+def try_to_record_processing_failure(
+    run_id: UUID,
+    error_message: str,
+    validation_failed: bool = False,
+) -> None:
+    """
+    Attempt to record a failure without hiding the original error.
+    """
+    try:
+        failed_run = fail_processing_run(
+            run_id=run_id,
+            error_message=error_message,
+            validation_failed=validation_failed,
+        )
+
+        if failed_run is None:
+            logger.error(
+                "Processing run could not transition to failed",
+                extra={"run_id": str(run_id)},
+            )
+    except Exception:
+        logger.exception(
+            "Processing failure could not be recorded",
+            extra={"run_id": str(run_id)},
+        )
+
+
 def read_and_validate_csv(file: UploadFile):
     """
     Validate the uploaded file and return its name, content type, and bytes.
@@ -312,6 +466,33 @@ def read_and_validate_csv(file: UploadFile):
     content_type = file.content_type or "text/csv"
 
     return filename, content_type, content
+
+
+def get_processing_run(run_id: UUID):
+    """
+    Return one processing run by its UUID.
+    """
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    upload_id,
+                    status,
+                    started_at,
+                    completed_at,
+                    row_count,
+                    curated_object_key,
+                    validation_status,
+                    error_message
+                FROM processing_runs
+                WHERE id = %s;
+                """,
+                (run_id,),
+            )
+            return cursor.fetchone()
+
 
 @app.post(
     "/datasets/{dataset_id}/uploads",
@@ -412,11 +593,38 @@ def process_upload(upload_id: UUID):
         )
 
     try:
+        processing_run = create_processing_run(upload_id)
+    except Exception:
+        logger.exception(
+            "Processing run creation failed",
+            extra={"upload_id": str(upload_id)},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Processing run creation failed.",
+        )
+
+    run_id = processing_run["id"]
+    try:
         csv_content = download_raw_object(
             upload["object_key"]
         )
     except Exception:
-        logger.exception("Raw object download failed")
+        logger.exception(
+            "Raw object download failed",
+            extra={
+                "run_id": str(run_id),
+                "upload_id": str(upload_id),
+            },
+        )
+
+        try_to_record_processing_failure(
+            run_id=run_id,
+            error_message=(
+                "Raw object storage is unavailable."
+            ),
+        )
+
         raise HTTPException(
             status_code=503,
             detail="Raw object storage is unavailable.",
@@ -426,8 +634,34 @@ def process_upload(upload_id: UUID):
         parquet_content, row_count = (
             convert_csv_to_parquet(csv_content)
         )
+
+        if row_count == 0:
+            try_to_record_processing_failure(
+                run_id=run_id,
+                error_message=(
+                    "The uploaded CSV contains no data rows."
+                ),
+                validation_failed=True,
+            )
+
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The uploaded CSV contains no data rows."
+                ),
+            )
+
     except duckdb.Error:
         logger.exception("CSV-to-Parquet conversion failed")
+
+        try_to_record_processing_failure(
+            run_id=run_id,
+            error_message=(
+                "The uploaded CSV could not be processed."
+            ),
+            validation_failed=True,
+        )
+
         raise HTTPException(
             status_code=422,
             detail="The uploaded CSV could not be processed.",
@@ -446,17 +680,54 @@ def process_upload(upload_id: UUID):
         )
     except Exception:
         logger.exception("Curated object upload failed")
+
+        try_to_record_processing_failure(
+            run_id=run_id,
+            error_message=(
+                "Curated object storage is unavailable."
+            ),
+        )
+
         raise HTTPException(
             status_code=503,
             detail="Curated object storage is unavailable.",
         )
 
+    try:
+        completed_run = complete_processing_run(
+            run_id=run_id,
+            row_count=row_count,
+            curated_object_key=curated_object_key,
+        )
+
+        if completed_run is None:
+            raise RuntimeError(
+                "The processing run was not in the running state."
+            )
+    except Exception:
+        logger.exception(
+            "Processing result tracking failed",
+            extra={
+                "run_id": str(run_id),
+                "upload_id": str(upload_id),
+            },
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Processing result tracking failed.",
+        )
+
     return {
-        "upload_id": upload["id"],
+        "run_id": run_id,
+        "upload_id": upload_id,
         "dataset_id": upload["dataset_id"],
+        "status": completed_run["status"],
         "object_key": curated_object_key,
         "format": "parquet",
         "row_count": row_count,
+        "validation_status": completed_run[
+            "validation_status"
+        ],
     }
 
 
@@ -479,3 +750,33 @@ def db_health_check():
                 "error": "database unavailable",
             },
         )
+
+
+@app.get(
+    "/processing-runs/{run_id}",
+    response_model=ProcessingRunResponse,
+    status_code=200,
+)
+def read_processing_run(run_id: UUID):
+    """
+    Return the current state of one processing run.
+    """
+    try:
+        processing_run = get_processing_run(run_id)
+    except Exception:
+        logger.exception(
+            "Processing run lookup failed",
+            extra={"run_id": str(run_id)},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Processing run lookup failed.",
+        )
+
+    if processing_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Processing run not found.",
+        )
+
+    return processing_run
