@@ -65,6 +65,19 @@ services:
       mc mb --ignore-existing local/raw;
       mc mb --ignore-existing local/curated;
       "
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    container_name: data-platform-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - api
+
 volumes:
   postgres_data:
   minio_data:
+  prometheus_data:

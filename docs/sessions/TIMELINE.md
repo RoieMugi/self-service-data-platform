@@ -252,6 +252,31 @@ verification on a clean Linux runner.
 
 ---
 
+## **Session 011: Operational Metrics with Prometheus**
+
+**Date:** 2026-09-02
+**Status:** Complete
+
+**What:** Added application-level processing metrics and persistent local
+collection with Prometheus.
+
+**Key achievements:**
+- Added `GET /metrics` using the Prometheus Python client
+- Measured processing outcomes, duration, successful row volume, and latest
+  successful completion time
+- Kept metric labels low-cardinality with four controlled outcome values
+- Added a pinned Prometheus service and persistent volume to Docker Compose
+- Verified the `api:8000` scrape target and queried stored live samples
+- Expanded the automated suite to 33 passing tests
+
+**Why it matters:** Operators can now observe aggregate platform behavior over
+time instead of inspecting only individual API responses and database records.
+
+**Next:** Add structured logging and correlation identifiers so individual
+requests and processing runs can be traced across diagnostic events.
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -265,7 +290,7 @@ verification on a clean Linux runner.
 | 007 | CSV-to-Parquet with DuckDB | S008 | 2026-08-31 | Complete |
 | 008 | Track runs & validation | S009 | 2026-09-01 | Complete |
 | 009 | Automated tests & GitHub Actions | S010 | 2026-09-01 | Complete |
-| 010 | Observability & docs | - | - | 📋 Planned |
+| 010 | Observability & docs | S011 | 2026-09-02 | Complete |
 
 ---
 
@@ -282,6 +307,9 @@ are persisted in MinIO and whose metadata is tracked in PostgreSQL.
 
 ✅ **Curated processing path:** Raw CSV uploads can be transformed with DuckDB and
 stored as dataset-organized Parquet objects in MinIO.
+
+✅ **Operational visibility:** FastAPI exposes processing metrics that Prometheus
+collects every 15 seconds into persistent local time-series storage.
 
 ---
 
@@ -311,12 +339,13 @@ data-platform-engineering/
 - Dataset registration through `POST /datasets`
 - Validation and duplicate-name protection
 - Raw CSV storage and curated Parquet processing
-- 27 automated tests
+- 33 automated tests
 - Automatic pytest execution with GitHub Actions
 - Docker image builds and runs
+- Prometheus metrics collection with persistent Docker storage
 
 **What's next:**
-- Add basic operational metrics and documentation
+- Add structured logging and correlation identifiers
 - Later, separate processing into a queued worker and add event streaming when
   multiple platform consumers need the same lifecycle events
 
@@ -336,4 +365,4 @@ data-platform-engineering/
 
 ---
 
-**Last updated:** 2026-09-01 (Session 010)
+**Last updated:** 2026-09-02 (Session 011)

@@ -19,6 +19,7 @@ Build a small self-service batch data platform that lets a data engineer:
 ```text
 User -> FastAPI -> PostgreSQL metadata
                  -> Python worker -> MinIO -> DuckDB -> Parquet
+                 -> /metrics -> Prometheus time-series storage
 ```
 
 The first version will run locally with Docker Compose. Kubernetes, Terraform,
@@ -59,7 +60,7 @@ such as data quality, lineage, catalog, metrics, or notifications.
 - [x] 007 - Execute CSV-to-Parquet processing with DuckDB.
 - [x] 008 - Track runs, validation results, and failures.
 - [x] 009 - Add automated tests and GitHub Actions.
-- [ ] 010 - Add basic operational metrics and documentation.
+- [x] 010 - Add basic operational metrics and documentation.
 - [ ] Post-MVP - Move processing to an asynchronous worker and job queue.
 - [ ] Post-MVP - Publish durable platform events for independent consumers.
 
@@ -70,9 +71,33 @@ such as data quality, lineage, catalog, metrics, or notifications.
 
 ## Current status
 
-Checkpoint 009 is complete. GitHub Actions now runs the 27-test automated suite
-on a clean Ubuntu runner for pushes and pull requests involving `main`. The next
-engineering increment is basic operational metrics and documentation.
+Checkpoint 010 is complete. FastAPI exposes processing metrics at `/metrics`,
+and a local Prometheus service scrapes them every 15 seconds into persistent
+Docker storage. The automated suite now contains 33 passing tests. The proposed
+next engineering increment is structured logging and correlation identifiers.
+
+## Operational metrics
+
+Prometheus is available locally at `http://localhost:9090` after running
+`docker compose up -d --build`. It scrapes `http://api:8000/metrics` inside the
+Compose network and stores its time series in the `prometheus_data` volume.
+
+The application exposes these custom metrics:
+
+- `platform_processing_runs_total{outcome=...}` counts successful, validation,
+  storage, and internal outcomes.
+- `platform_processing_duration_seconds{outcome=...}` measures processing time.
+- `platform_processed_rows_total` counts rows from successful runs.
+- `platform_last_successful_processing_timestamp_seconds` records the most
+  recent successful completion time.
+
+## Recent activity (2026-09-02, Session 011)
+
+- Added a Prometheus-compatible FastAPI metrics endpoint.
+- Instrumented processing outcomes, duration, row volume, and last success time.
+- Added a pinned Prometheus server to Docker Compose with persistent storage.
+- Verified Prometheus scraping and live successful and validation-failed runs.
+- Expanded the automated suite from 27 to 33 passing tests.
 
 ## Recent activity (2026-09-01, Session 010)
 

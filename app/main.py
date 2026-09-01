@@ -4,12 +4,20 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import monotonic, time
 from uuid import UUID, uuid4
 
 import duckdb
 import psycopg
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from minio import Minio
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +38,28 @@ MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 
 app = FastAPI()
+
+PROCESSING_RUNS = Counter(
+    "platform_processing_runs_total",
+    "Total number of completed processing runs.",
+    ["outcome"],
+)
+
+PROCESSING_DURATION = Histogram(
+    "platform_processing_duration_seconds",
+    "Time spent processing an uploaded CSV.",
+    ["outcome"],
+)
+
+PROCESSED_ROWS = Counter(
+    "platform_processed_rows_total",
+    "Total number of rows processed successfully.",
+)
+
+LAST_SUCCESSFUL_PROCESSING = Gauge(
+    "platform_last_successful_processing_timestamp_seconds",
+    "Unix timestamp of the latest successful processing run.",
+)
 
 
 class DatasetCreate(BaseModel):
@@ -568,6 +598,23 @@ def upload_dataset_file(
         )
 
 
+def record_processing_metrics(
+    outcome: str,
+    timer_started_at: float,
+    row_count: int | None = None,
+):
+    duration = monotonic() - timer_started_at
+
+    PROCESSING_RUNS.labels(outcome=outcome).inc()
+    PROCESSING_DURATION.labels(outcome=outcome).observe(
+        duration
+    )
+
+    if outcome == "succeeded":
+        PROCESSED_ROWS.inc(row_count or 0)
+        LAST_SUCCESSFUL_PROCESSING.set(time())
+
+
 @app.post(
     "/uploads/{upload_id}/process",
     response_model=ProcessingResponse,
@@ -592,12 +639,18 @@ def process_upload(upload_id: UUID):
             detail="Upload not found.",
         )
 
+    timer_started_at = monotonic()
+
     try:
         processing_run = create_processing_run(upload_id)
     except Exception:
         logger.exception(
             "Processing run creation failed",
             extra={"upload_id": str(upload_id)},
+        )
+        record_processing_metrics(
+            outcome="internal_failed",
+            timer_started_at=timer_started_at,
         )
         raise HTTPException(
             status_code=500,
@@ -624,7 +677,10 @@ def process_upload(upload_id: UUID):
                 "Raw object storage is unavailable."
             ),
         )
-
+        record_processing_metrics(
+            outcome="storage_failed",
+            timer_started_at=timer_started_at,
+        )
         raise HTTPException(
             status_code=503,
             detail="Raw object storage is unavailable.",
@@ -642,6 +698,11 @@ def process_upload(upload_id: UUID):
                     "The uploaded CSV contains no data rows."
                 ),
                 validation_failed=True,
+            )
+
+            record_processing_metrics(
+                outcome="validation_failed",
+                timer_started_at=timer_started_at,
             )
 
             raise HTTPException(
@@ -662,6 +723,10 @@ def process_upload(upload_id: UUID):
             validation_failed=True,
         )
 
+        record_processing_metrics(
+            outcome="validation_failed",
+            timer_started_at=timer_started_at,
+        )
         raise HTTPException(
             status_code=422,
             detail="The uploaded CSV could not be processed.",
@@ -688,6 +753,11 @@ def process_upload(upload_id: UUID):
             ),
         )
 
+        record_processing_metrics(
+            outcome="storage_failed",
+            timer_started_at=timer_started_at,
+        )
+
         raise HTTPException(
             status_code=503,
             detail="Curated object storage is unavailable.",
@@ -712,10 +782,22 @@ def process_upload(upload_id: UUID):
                 "upload_id": str(upload_id),
             },
         )
+
+        record_processing_metrics(
+            outcome="internal_failed",
+            timer_started_at=timer_started_at,
+        )
+
         raise HTTPException(
             status_code=500,
             detail="Processing result tracking failed.",
         )
+
+    record_processing_metrics(
+        outcome="succeeded",
+        timer_started_at=timer_started_at,
+        row_count=row_count,
+    )
 
     return {
         "run_id": run_id,
@@ -750,6 +832,14 @@ def db_health_check():
                 "error": "database unavailable",
             },
         )
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 
 @app.get(

@@ -1,15 +1,15 @@
 from datetime import datetime, timezone
-from unittest.mock import Mock, MagicMock
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import MagicMock, Mock
 from uuid import UUID
+
+import duckdb
+import pytest
+from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.main import app
-from fastapi.testclient import TestClient
-
-from pathlib import Path
-from tempfile import TemporaryDirectory
-
-import duckdb
 
 client = TestClient(app)
 
@@ -662,6 +662,19 @@ def test_process_upload_returns_curated_result(monkeypatch):
         fake_complete_run,
     )
 
+    fake_metrics = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "record_processing_metrics",
+        fake_metrics,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "monotonic",
+        lambda: 10.0,
+    )
+
     response = client.post(
         f"/uploads/{upload_id}/process"
     )
@@ -678,6 +691,11 @@ def test_process_upload_returns_curated_result(monkeypatch):
         "validation_status": "passed",
     }
 
+    fake_metrics.assert_called_once_with(
+        outcome="succeeded",
+        timer_started_at=10.0,
+        row_count=1,
+    )
     fake_download.assert_called_once_with(
         raw_object_key
     )
@@ -811,6 +829,19 @@ def test_process_upload_returns_422_for_unprocessable_csv(
         fake_curated_upload,
     )
 
+    fake_metrics = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "record_processing_metrics",
+        fake_metrics,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "monotonic",
+        lambda: 10.0,
+    )
+
     response = client.post(
         f"/uploads/{upload_id}/process"
     )
@@ -819,6 +850,11 @@ def test_process_upload_returns_422_for_unprocessable_csv(
     assert response.json() == {
         "detail": "The uploaded CSV could not be processed.",
     }
+
+    fake_metrics.assert_called_once_with(
+        outcome="validation_failed",
+        timer_started_at=10.0,
+    )
 
     fake_curated_upload.assert_not_called()
 
@@ -866,6 +902,7 @@ def test_process_upload_returns_503_when_curated_upload_fails(
             "status": "running",
         }
     )
+
     fake_record_failure = Mock()
 
     monkeypatch.setattr(
@@ -904,6 +941,19 @@ def test_process_upload_returns_503_when_curated_upload_fails(
         fail_curated_upload,
     )
 
+    fake_metrics = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "record_processing_metrics",
+        fake_metrics,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "monotonic",
+        lambda: 10.0,
+    )
+
     response = client.post(
         f"/uploads/{upload_id}/process"
     )
@@ -915,6 +965,10 @@ def test_process_upload_returns_503_when_curated_upload_fails(
         ),
     }
 
+    fake_metrics.assert_called_once_with(
+        outcome="storage_failed",
+        timer_started_at=10.0,
+    )
     fake_create_run.assert_called_once_with(upload_id)
 
     fake_record_failure.assert_called_once_with(
@@ -1210,3 +1264,226 @@ def test_get_processing_run_returns_database_record(
 
     _, parameters = fake_cursor.execute.call_args.args
     assert parameters == (run_id,)
+
+
+def test_metrics_returns_prometheus_metrics():
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith(
+        "text/plain"
+    )
+
+    metrics_text = response.text
+
+    assert "# HELP platform_processing_runs_total" in metrics_text
+    assert "# TYPE platform_processing_runs_total counter" in metrics_text
+
+    assert (
+        "# HELP platform_processing_duration_seconds"
+        in metrics_text
+    )
+    assert (
+        "# TYPE platform_processing_duration_seconds histogram"
+        in metrics_text
+    )
+
+    assert "# HELP platform_processed_rows_total" in metrics_text
+    assert "# TYPE platform_processed_rows_total counter" in metrics_text
+
+    assert (
+        "# HELP platform_last_successful_processing_timestamp_seconds"
+        in metrics_text
+    )
+    assert (
+        "# TYPE platform_last_successful_processing_timestamp_seconds gauge"
+        in metrics_text
+    )
+
+
+def test_record_processing_metrics_records_success(
+    monkeypatch,
+):
+    fake_runs = Mock()
+    fake_duration = Mock()
+    fake_rows = Mock()
+    fake_last_success = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "PROCESSING_RUNS",
+        fake_runs,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "PROCESSING_DURATION",
+        fake_duration,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "PROCESSED_ROWS",
+        fake_rows,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "LAST_SUCCESSFUL_PROCESSING",
+        fake_last_success,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "monotonic",
+        lambda: 15.5,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "time",
+        lambda: 1_788_296_400,
+    )
+
+    main_module.record_processing_metrics(
+        outcome="succeeded",
+        timer_started_at=10.0,
+        row_count=42,
+    )
+
+    fake_runs.labels.assert_called_once_with(
+        outcome="succeeded"
+    )
+    fake_runs.labels.return_value.inc.assert_called_once_with()
+
+    fake_duration.labels.assert_called_once_with(
+        outcome="succeeded"
+    )
+    (
+        fake_duration.labels.return_value.observe
+        .assert_called_once_with(5.5)
+    )
+
+    fake_rows.inc.assert_called_once_with(42)
+    fake_last_success.set.assert_called_once_with(
+        1_788_296_400
+    )
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "validation_failed",
+        "storage_failed",
+        "internal_failed",
+    ],
+)
+def test_record_processing_metrics_records_failure(
+    monkeypatch,
+    outcome,
+):
+    fake_runs = Mock()
+    fake_duration = Mock()
+    fake_rows = Mock()
+    fake_last_success = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "PROCESSING_RUNS",
+        fake_runs,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "PROCESSING_DURATION",
+        fake_duration,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "PROCESSED_ROWS",
+        fake_rows,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "LAST_SUCCESSFUL_PROCESSING",
+        fake_last_success,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "monotonic",
+        lambda: 14.25,
+    )
+
+    main_module.record_processing_metrics(
+        outcome=outcome,
+        timer_started_at=10.0,
+    )
+
+    fake_runs.labels.assert_called_once_with(
+        outcome=outcome
+    )
+    fake_runs.labels.return_value.inc.assert_called_once_with()
+
+    fake_duration.labels.assert_called_once_with(
+        outcome=outcome
+    )
+    (
+        fake_duration.labels.return_value.observe
+        .assert_called_once_with(4.25)
+    )
+
+    fake_rows.inc.assert_not_called()
+    fake_last_success.set.assert_not_called()
+
+
+def test_process_upload_records_internal_metric_when_run_creation_fails(
+    monkeypatch,
+):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    dataset_id = UUID(
+        "a81cb365-f0a3-443a-a6ea-c077949e6207"
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_upload",
+        lambda requested_id: {
+            "id": requested_id,
+            "dataset_id": dataset_id,
+            "object_key": "dataset/upload/sales.csv",
+        },
+    )
+
+    def fail_run_creation(requested_upload_id):
+        raise Exception(
+            "simulated processing-run creation failure"
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "create_processing_run",
+        fail_run_creation,
+    )
+
+    fake_metrics = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "record_processing_metrics",
+        fake_metrics,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "monotonic",
+        lambda: 10.0,
+    )
+
+    response = client.post(
+        f"/uploads/{upload_id}/process"
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Processing run creation failed.",
+    }
+
+    fake_metrics.assert_called_once_with(
+        outcome="internal_failed",
+        timer_started_at=10.0,
+    )
