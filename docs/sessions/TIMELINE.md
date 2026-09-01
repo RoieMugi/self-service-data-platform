@@ -228,6 +228,30 @@ Users can retrieve durable status, timing, output, validation, and failure data.
 
 ---
 
+## **Session 010: Continuous Integration with GitHub Actions**
+
+**Date:** 2026-09-01
+**Status:** Complete
+
+**What:** Added automatic test execution for repository integration events.
+
+**Key achievements:**
+- Added `.github/workflows/tests.yml`
+- Triggered CI for pushes and pull requests involving `main`
+- Used a clean Ubuntu runner with Python 3.11 and pip caching
+- Installed pinned dependencies and ran the 27-test pytest suite
+- Verified GitHub Actions run `#1` succeeded in 17 seconds
+- Explored required status checks and documented the private-repository plan
+  limitation
+
+**Why it matters:** Test execution is now a repeatable repository process rather
+than an optional local step. Every integration event receives independent
+verification on a clean Linux runner.
+
+**Next:** Add basic operational metrics and documentation.
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -240,7 +264,7 @@ Users can retrieve durable status, timing, output, validation, and failure data.
 | 006 | MinIO raw object storage | S007 | 2026-08-26 | Complete |
 | 007 | CSV-to-Parquet with DuckDB | S008 | 2026-08-31 | Complete |
 | 008 | Track runs & validation | S009 | 2026-09-01 | Complete |
-| 009 | Automated tests & GitHub Actions | - | - | 📋 Planned |
+| 009 | Automated tests & GitHub Actions | S010 | 2026-09-01 | Complete |
 | 010 | Observability & docs | - | - | 📋 Planned |
 
 ---
@@ -288,10 +312,11 @@ data-platform-engineering/
 - Validation and duplicate-name protection
 - Raw CSV storage and curated Parquet processing
 - 27 automated tests
+- Automatic pytest execution with GitHub Actions
 - Docker image builds and runs
 
 **What's next:**
-- Add automated verification with GitHub Actions
+- Add basic operational metrics and documentation
 - Later, separate processing into a queued worker and add event streaming when
   multiple platform consumers need the same lifecycle events
 
@@ -311,4 +336,4 @@ data-platform-engineering/
 
 ---
 
-**Last updated:** 2026-09-01 (Session 009)
+**Last updated:** 2026-09-01 (Session 010)

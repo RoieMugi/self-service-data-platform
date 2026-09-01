@@ -27,6 +27,7 @@ These records are part of the project, not temporary notes.
 | [007](007-minio-raw-storage.md) | 2026-08-26 | Store CSV uploads in MinIO | Complete |
 | [008](008-duckdb-csv-to-parquet.md) | 2026-08-31 | Convert raw CSV to curated Parquet | Complete |
 | [009](009-processing-run-tracking.md) | 2026-09-01 | Track processing runs and validation | Complete |
+| [010](010-continuous-integration.md) | 2026-09-01 | Automate tests with GitHub Actions | Complete |
 
 ## Quick Links
 

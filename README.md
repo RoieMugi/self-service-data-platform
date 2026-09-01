@@ -58,7 +58,7 @@ such as data quality, lineage, catalog, metrics, or notifications.
 - [x] 006 - Add MinIO raw object storage.
 - [x] 007 - Execute CSV-to-Parquet processing with DuckDB.
 - [x] 008 - Track runs, validation results, and failures.
-- [ ] 009 - Add automated tests and GitHub Actions.
+- [x] 009 - Add automated tests and GitHub Actions.
 - [ ] 010 - Add basic operational metrics and documentation.
 - [ ] Post-MVP - Move processing to an asynchronous worker and job queue.
 - [ ] Post-MVP - Publish durable platform events for independent consumers.
@@ -70,10 +70,17 @@ such as data quality, lineage, catalog, metrics, or notifications.
 
 ## Current status
 
-Checkpoint 008 is complete. The platform persistently tracks processing runs,
-validation outcomes, curated output metadata, row counts, and safe failure
-summaries. The next engineering increment is automated verification with GitHub
-Actions.
+Checkpoint 009 is complete. GitHub Actions now runs the 27-test automated suite
+on a clean Ubuntu runner for pushes and pull requests involving `main`. The next
+engineering increment is basic operational metrics and documentation.
+
+## Recent activity (2026-09-01, Session 010)
+
+- Added a GitHub Actions workflow for pushes and pull requests involving `main`.
+- Matched CI to the project runtime with Python 3.11 and pinned dependencies.
+- Verified 27 tests locally and in GitHub Actions run `#1`.
+- Designed a required-check ruleset, but confirmed GitHub does not enforce it
+  for this private repository on the current account plan.
 
 ## Recent activity (2026-09-01, Session 009)
 
