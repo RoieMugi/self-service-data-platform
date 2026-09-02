@@ -1,3 +1,5 @@
+import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -588,7 +590,9 @@ def test_process_upload_returns_curated_result(monkeypatch):
     dataset_id = UUID(
         "a81cb365-f0a3-443a-a6ea-c077949e6207"
     )
-
+    correlation_id = (
+        "0b87b403-bccc-4e92-a496-d41c27d18f42"
+    )
     raw_object_key = (
         f"{dataset_id}/{upload_id}/sales.csv"
     )
@@ -598,6 +602,14 @@ def test_process_upload_returns_curated_result(monkeypatch):
 
     csv_content = b"order_id,amount\n1,10\n"
     parquet_content = b"PAR1simulated-parquet"
+
+    fake_processing_log = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "log_processing_event",
+        fake_processing_log,
+    )
 
     monkeypatch.setattr(
         main_module,
@@ -676,7 +688,10 @@ def test_process_upload_returns_curated_result(monkeypatch):
     )
 
     response = client.post(
-        f"/uploads/{upload_id}/process"
+        f"/uploads/{upload_id}/process",
+        headers={
+            "X-Correlation-ID": correlation_id,
+        },
     )
 
     assert response.status_code == 200
@@ -713,6 +728,23 @@ def test_process_upload_returns_curated_result(monkeypatch):
         run_id=run_id,
         row_count=1,
         curated_object_key=curated_object_key,
+    )
+    fake_processing_log.assert_any_call(
+        level=logging.INFO,
+        event="processing_started",
+        correlation_id=correlation_id,
+        upload_id=upload_id,
+        run_id=run_id,
+    )
+
+    fake_processing_log.assert_any_call(
+        level=logging.INFO,
+        event="processing_succeeded",
+        correlation_id=correlation_id,
+        upload_id=upload_id,
+        run_id=run_id,
+        outcome="succeeded",
+        row_count=1,
     )
 
 
@@ -773,11 +805,22 @@ def test_process_upload_returns_422_for_unprocessable_csv(
     dataset_id = UUID(
         "a81cb365-f0a3-443a-a6ea-c077949e6207"
     )
+    correlation_id = (
+        "0b87b403-bccc-4e92-a496-d41c27d18f42"
+    )
     raw_object_key = (
         f"{dataset_id}/{upload_id}/broken.csv"
     )
 
     fake_curated_upload = Mock()
+
+    fake_processing_log = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "log_processing_event",
+        fake_processing_log,
+    )
 
     monkeypatch.setattr(
         main_module,
@@ -843,7 +886,10 @@ def test_process_upload_returns_422_for_unprocessable_csv(
     )
 
     response = client.post(
-        f"/uploads/{upload_id}/process"
+        f"/uploads/{upload_id}/process",
+        headers={
+            "X-Correlation-ID": correlation_id,
+        },
     )
 
     assert response.status_code == 422
@@ -868,6 +914,14 @@ def test_process_upload_returns_422_for_unprocessable_csv(
         validation_failed=True,
     )
 
+    fake_processing_log.assert_any_call(
+        level=logging.WARNING,
+        event="processing_failed",
+        correlation_id=correlation_id,
+        upload_id=upload_id,
+        run_id=run_id,
+        outcome="validation_failed",
+    )
 
 def test_process_upload_returns_503_when_curated_upload_fails(
     monkeypatch,
@@ -875,6 +929,11 @@ def test_process_upload_returns_503_when_curated_upload_fails(
     upload_id = UUID(
         "cd49f308-e39e-4d87-a7f0-f72f75bde678"
     )
+
+    correlation_id = (
+        "0b87b403-bccc-4e92-a496-d41c27d18f42"
+    )
+
     run_id = UUID(
         "79d674f8-9a9b-4b31-8951-31c381b21429"
     )
@@ -883,6 +942,14 @@ def test_process_upload_returns_503_when_curated_upload_fails(
     )
     raw_object_key = (
         f"{dataset_id}/{upload_id}/sales.csv"
+    )
+
+    fake_processing_log = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "log_processing_event",
+        fake_processing_log,
     )
 
     monkeypatch.setattr(
@@ -955,7 +1022,10 @@ def test_process_upload_returns_503_when_curated_upload_fails(
     )
 
     response = client.post(
-        f"/uploads/{upload_id}/process"
+        f"/uploads/{upload_id}/process",
+        headers={
+            "X-Correlation-ID": correlation_id,
+        },
     )
 
     assert response.status_code == 503
@@ -977,6 +1047,155 @@ def test_process_upload_returns_503_when_curated_upload_fails(
             "Curated object storage is unavailable."
         ),
     )
+
+    fake_processing_log.assert_any_call(
+        level=logging.ERROR,
+        event="processing_failed",
+        correlation_id=correlation_id,
+        upload_id=upload_id,
+        run_id=run_id,
+        outcome="storage_failed",
+    )
+
+def test_process_upload_returns_503_when_raw_download_fails(
+    monkeypatch,
+):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+
+    correlation_id = (
+        "0b87b403-bccc-4e92-a496-d41c27d18f42"
+    )
+
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    dataset_id = UUID(
+        "a81cb365-f0a3-443a-a6ea-c077949e6207"
+    )
+    raw_object_key = (
+        f"{dataset_id}/{upload_id}/sales.csv"
+    )
+
+    fake_processing_log = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "log_processing_event",
+        fake_processing_log,
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_upload",
+        lambda requested_id: {
+            "id": requested_id,
+            "dataset_id": dataset_id,
+            "object_key": raw_object_key,
+        },
+    )
+
+    fake_create_run = Mock(
+        return_value={
+            "id": run_id,
+            "upload_id": upload_id,
+            "status": "running",
+        }
+    )
+
+    fake_record_failure = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "create_processing_run",
+        fake_create_run,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "try_to_record_processing_failure",
+        fake_record_failure,
+    )
+
+    def fail_raw_download(object_key):
+        raise Exception(
+            "simulated raw object storage failure"
+        )
+
+
+    monkeypatch.setattr(
+        main_module,
+        "download_raw_object",
+        fail_raw_download,
+    )
+    fake_conversion = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "convert_csv_to_parquet",
+        fake_conversion,
+    )
+
+    fake_curated_upload = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "upload_curated_object",
+        fake_curated_upload,
+    )
+
+    fake_metrics = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "record_processing_metrics",
+        fake_metrics,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "monotonic",
+        lambda: 10.0,
+    )
+
+    response = client.post(
+        f"/uploads/{upload_id}/process",
+        headers={
+            "X-Correlation-ID": correlation_id,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": (
+            "Raw object storage is unavailable."
+        ),
+    }
+
+    fake_metrics.assert_called_once_with(
+        outcome="storage_failed",
+        timer_started_at=10.0,
+    )
+    fake_create_run.assert_called_once_with(upload_id)
+
+    fake_record_failure.assert_called_once_with(
+        run_id=run_id,
+        error_message=(
+            "Raw object storage is unavailable."
+        ),
+    )
+
+    fake_conversion.assert_not_called()
+    fake_curated_upload.assert_not_called()
+
+    fake_processing_log.assert_any_call(
+        level=logging.ERROR,
+        event="processing_failed",
+        correlation_id=correlation_id,
+        upload_id=upload_id,
+        run_id=run_id,
+        outcome="storage_failed",
+    )
+
 
 def test_complete_processing_run_updates_success_fields(
     monkeypatch,
@@ -1430,6 +1649,191 @@ def test_record_processing_metrics_records_failure(
     fake_last_success.set.assert_not_called()
 
 
+def test_process_upload_logs_validation_failure_for_empty_rows(
+    monkeypatch,
+):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    dataset_id = UUID(
+        "a81cb365-f0a3-443a-a6ea-c077949e6207"
+    )
+    correlation_id = (
+        "0b87b403-bccc-4e92-a496-d41c27d18f42"
+    )
+    fake_record_failure = Mock()
+    fake_curated_upload = Mock()
+    fake_metrics = Mock()
+    fake_processing_log = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "get_upload",
+        lambda requested_id: {
+            "id": requested_id,
+            "dataset_id": dataset_id,
+            "object_key": "dataset/upload/empty.csv",
+        },
+    )
+    monkeypatch.setattr(
+        main_module,
+        "create_processing_run",
+        lambda requested_id: {"id": run_id},
+    )
+    monkeypatch.setattr(
+        main_module,
+        "download_raw_object",
+        lambda object_key: b"order_id,amount\n",
+    )
+    monkeypatch.setattr(
+        main_module,
+        "convert_csv_to_parquet",
+        lambda csv_content: (b"PAR1", 0),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "upload_curated_object",
+        fake_curated_upload,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "try_to_record_processing_failure",
+        fake_record_failure,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "record_processing_metrics",
+        fake_metrics,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "log_processing_event",
+        fake_processing_log,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "monotonic",
+        lambda: 10.0,
+    )
+
+    response = client.post(
+        f"/uploads/{upload_id}/process",
+        headers={"X-Correlation-ID": correlation_id},
+    )
+
+    assert response.status_code == 422
+    fake_curated_upload.assert_not_called()
+    fake_record_failure.assert_called_once_with(
+        run_id=run_id,
+        error_message=(
+            "The uploaded CSV contains no data rows."
+        ),
+        validation_failed=True,
+    )
+    fake_processing_log.assert_any_call(
+        level=logging.WARNING,
+        event="processing_failed",
+        correlation_id=correlation_id,
+        upload_id=upload_id,
+        run_id=run_id,
+        outcome="validation_failed",
+    )
+
+
+def test_process_upload_logs_internal_result_tracking_failure(
+    monkeypatch,
+):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    dataset_id = UUID(
+        "a81cb365-f0a3-443a-a6ea-c077949e6207"
+    )
+    correlation_id = (
+        "0b87b403-bccc-4e92-a496-d41c27d18f42"
+    )
+    fake_metrics = Mock()
+    fake_processing_log = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "get_upload",
+        lambda requested_id: {
+            "id": requested_id,
+            "dataset_id": dataset_id,
+            "object_key": "dataset/upload/sales.csv",
+        },
+    )
+    monkeypatch.setattr(
+        main_module,
+        "create_processing_run",
+        lambda requested_id: {"id": run_id},
+    )
+    monkeypatch.setattr(
+        main_module,
+        "download_raw_object",
+        lambda object_key: b"order_id,amount\n1,10\n",
+    )
+    monkeypatch.setattr(
+        main_module,
+        "convert_csv_to_parquet",
+        lambda csv_content: (b"PAR1", 1),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "upload_curated_object",
+        Mock(),
+    )
+
+    def fail_result_tracking(**kwargs):
+        raise Exception("simulated result tracking failure")
+
+    monkeypatch.setattr(
+        main_module,
+        "complete_processing_run",
+        fail_result_tracking,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "record_processing_metrics",
+        fake_metrics,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "log_processing_event",
+        fake_processing_log,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "monotonic",
+        lambda: 10.0,
+    )
+
+    response = client.post(
+        f"/uploads/{upload_id}/process",
+        headers={"X-Correlation-ID": correlation_id},
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Processing result tracking failed.",
+    }
+    fake_processing_log.assert_any_call(
+        level=logging.ERROR,
+        event="processing_failed",
+        correlation_id=correlation_id,
+        upload_id=upload_id,
+        run_id=run_id,
+        outcome="internal_failed",
+    )
+
+
 def test_process_upload_records_internal_metric_when_run_creation_fails(
     monkeypatch,
 ):
@@ -1438,6 +1842,9 @@ def test_process_upload_records_internal_metric_when_run_creation_fails(
     )
     dataset_id = UUID(
         "a81cb365-f0a3-443a-a6ea-c077949e6207"
+    )
+    correlation_id = (
+        "0b87b403-bccc-4e92-a496-d41c27d18f42"
     )
 
     monkeypatch.setattr(
@@ -1462,6 +1869,7 @@ def test_process_upload_records_internal_metric_when_run_creation_fails(
     )
 
     fake_metrics = Mock()
+    fake_processing_log = Mock()
 
     monkeypatch.setattr(
         main_module,
@@ -1470,12 +1878,18 @@ def test_process_upload_records_internal_metric_when_run_creation_fails(
     )
     monkeypatch.setattr(
         main_module,
+        "log_processing_event",
+        fake_processing_log,
+    )
+    monkeypatch.setattr(
+        main_module,
         "monotonic",
         lambda: 10.0,
     )
 
     response = client.post(
-        f"/uploads/{upload_id}/process"
+        f"/uploads/{upload_id}/process",
+        headers={"X-Correlation-ID": correlation_id},
     )
 
     assert response.status_code == 500
@@ -1486,4 +1900,174 @@ def test_process_upload_records_internal_metric_when_run_creation_fails(
     fake_metrics.assert_called_once_with(
         outcome="internal_failed",
         timer_started_at=10.0,
+    )
+    fake_processing_log.assert_called_once_with(
+        level=logging.ERROR,
+        event="processing_failed",
+        correlation_id=correlation_id,
+        upload_id=upload_id,
+        outcome="internal_failed",
+    )
+
+
+def test_health_generates_correlation_id():
+    response = client.get("/health")
+
+    correlation_id = response.headers.get(
+        "X-Correlation-ID"
+    )
+
+    assert correlation_id is not None
+    UUID(correlation_id)
+
+def test_health_reuses_valid_correlation_id():
+    correlation_id = (
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+
+    response = client.get(
+        "/health",
+        headers={
+            "X-Correlation-ID": correlation_id,
+        },
+    )
+
+    assert response.headers["X-Correlation-ID"] == (
+        correlation_id
+    )
+
+def test_health_replaces_invalid_correlation_id():
+    response = client.get(
+        "/health",
+        headers={
+            "X-Correlation-ID": "not-a-valid-uuid",
+        },
+    )
+
+    returned_id = response.headers[
+        "X-Correlation-ID"
+    ]
+
+    assert returned_id != "not-a-valid-uuid"
+    UUID(returned_id)
+
+def test_request_completion_log_contains_context(
+    caplog,
+):
+    correlation_id = (
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+
+    main_module.logger.addHandler(caplog.handler)
+
+    try:
+        with caplog.at_level(
+            logging.INFO,
+            logger="platform.api",
+        ):
+            response = client.get(
+                "/health",
+                headers={
+                    "X-Correlation-ID": correlation_id,
+                },
+            )
+    finally:
+        main_module.logger.removeHandler(
+            caplog.handler
+        )
+
+    request_log = next(
+        record
+        for record in caplog.records
+        if record.getMessage()
+        == "http_request_completed"
+    )
+
+    assert response.status_code == 200
+    assert request_log.correlation_id == correlation_id
+    assert request_log.method == "GET"
+    assert request_log.path == "/health"
+    assert request_log.status_code == 200
+    assert request_log.duration_ms >= 0
+
+def test_json_log_formatter_serializes_request_fields():
+    record = logging.LogRecord(
+        name="platform.api",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="http_request_completed",
+        args=(),
+        exc_info=None,
+    )
+
+    record.correlation_id = (
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    record.method = "GET"
+    record.path = "/health"
+    record.status_code = 200
+    record.duration_ms = 12.5
+
+    formatter = main_module.JsonLogFormatter()
+    output = json.loads(formatter.format(record))
+
+    assert output["level"] == "INFO"
+    assert output["event"] == "http_request_completed"
+    assert output["correlation_id"] == (
+        record.correlation_id
+    )
+    assert output["method"] == "GET"
+    assert output["path"] == "/health"
+    assert output["status_code"] == 200
+    assert output["duration_ms"] == 12.5
+    assert "timestamp" in output
+
+def test_application_logger_uses_json_formatter():
+    assert main_module.logger.level == logging.INFO
+    assert main_module.logger.propagate is False
+    assert len(main_module.logger.handlers) == 1
+
+    handler = main_module.logger.handlers[0]
+
+    assert isinstance(
+        handler.formatter,
+        main_module.JsonLogFormatter,
+    )
+
+def test_log_processing_event_emits_context(
+    monkeypatch,
+):
+    upload_id = UUID(
+        "cd49f308-e39e-4d87-a7f0-f72f75bde678"
+    )
+    run_id = UUID(
+        "79d674f8-9a9b-4b31-8951-31c381b21429"
+    )
+    fake_logger = Mock()
+
+    monkeypatch.setattr(
+        main_module,
+        "logger",
+        fake_logger,
+    )
+
+    main_module.log_processing_event(
+        level=logging.INFO,
+        event="processing_started",
+        correlation_id="0b87b403-bccc-4e92-a496-d41c27d18f42",
+        upload_id=upload_id,
+        run_id=run_id,
+    )
+
+    fake_logger.log.assert_called_once_with(
+        logging.INFO,
+        "processing_started",
+        extra={
+            "correlation_id": (
+                "0b87b403-bccc-4e92-a496-d41c27d18f42"
+            ),
+            "upload_id": str(upload_id),
+            "run_id": str(run_id),
+        },
     )

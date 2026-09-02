@@ -61,6 +61,7 @@ such as data quality, lineage, catalog, metrics, or notifications.
 - [x] 008 - Track runs, validation results, and failures.
 - [x] 009 - Add automated tests and GitHub Actions.
 - [x] 010 - Add basic operational metrics and documentation.
+- [x] 011 - Add structured logging and correlation identifiers.
 - [ ] Post-MVP - Move processing to an asynchronous worker and job queue.
 - [ ] Post-MVP - Publish durable platform events for independent consumers.
 
@@ -71,10 +72,22 @@ such as data quality, lineage, catalog, metrics, or notifications.
 
 ## Current status
 
-Checkpoint 010 is complete. FastAPI exposes processing metrics at `/metrics`,
-and a local Prometheus service scrapes them every 15 seconds into persistent
-Docker storage. The automated suite now contains 33 passing tests. The proposed
-next engineering increment is structured logging and correlation identifiers.
+Checkpoint 011 is complete. FastAPI now emits structured JSON request and
+processing lifecycle logs, and propagates validated correlation identifiers
+through response headers and diagnostic events. The automated suite contains 43
+passing tests. The proposed next increment is Grafana dashboards and basic
+alerting over the existing Prometheus metrics.
+
+## Structured logging
+
+Clients may send a UUID in the `X-Correlation-ID` request header. The API reuses
+a valid value, generates a UUID when the header is absent or invalid, and returns
+the effective value in the response header.
+
+Request-completion logs include the correlation ID, HTTP method, stable route
+template, status code, and duration. Processing events add upload and run IDs,
+controlled outcomes, and successful row counts where relevant. CSV contents,
+credentials, and request bodies are not logged.
 
 ## Operational metrics
 
@@ -90,6 +103,14 @@ The application exposes these custom metrics:
 - `platform_processed_rows_total` counts rows from successful runs.
 - `platform_last_successful_processing_timestamp_seconds` records the most
   recent successful completion time.
+
+## Recent activity (2026-09-02, Session 012)
+
+- Added validated or generated request correlation identifiers.
+- Added structured JSON request-completion and processing lifecycle logs.
+- Covered success, validation, storage, and internal processing outcomes.
+- Verified a correlated validation failure against the Dockerized API.
+- Expanded the automated suite from 33 to 43 passing tests.
 
 ## Recent activity (2026-09-02, Session 011)
 

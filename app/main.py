@@ -1,6 +1,7 @@
+import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -9,7 +10,14 @@ from uuid import UUID, uuid4
 
 import duckdb
 import psycopg
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from minio import Minio
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -22,7 +30,89 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from pydantic import BaseModel, ConfigDict, Field
 
-logger = logging.getLogger(__name__)
+
+class JsonLogFormatter(logging.Formatter):
+    contextual_fields = (
+        "correlation_id",
+        "method",
+        "path",
+        "status_code",
+        "duration_ms",
+        "upload_id",
+        "dataset_id",
+        "run_id",
+        "outcome",
+        "row_count",
+    )
+
+    def format(self, record):
+        timestamp = datetime.fromtimestamp(
+            record.created,
+            tz=timezone.utc,
+        )
+
+        payload = {
+            "timestamp": timestamp.isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "event": record.getMessage(),
+        }
+
+        for field in self.contextual_fields:
+            if hasattr(record, field):
+                payload[field] = getattr(record, field)
+
+        if record.exc_info:
+            payload["exception"] = self.formatException(
+                record.exc_info
+            )
+
+        return json.dumps(
+            payload,
+            default=str,
+        )
+
+
+logger = logging.getLogger("platform.api")
+logger.setLevel(logging.INFO)
+logger.propagate = False
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(JsonLogFormatter())
+
+logger.handlers.clear()
+logger.addHandler(console_handler)
+
+
+def log_processing_event(
+    *,
+    level: int,
+    event: str,
+    correlation_id: str,
+    upload_id: UUID,
+    run_id: UUID | None = None,
+    outcome: str | None = None,
+    row_count: int | None = None,
+):
+    context = {
+        "correlation_id": correlation_id,
+        "upload_id": str(upload_id),
+    }
+
+    if run_id is not None:
+        context["run_id"] = str(run_id)
+
+    if outcome is not None:
+        context["outcome"] = outcome
+
+    if row_count is not None:
+        context["row_count"] = row_count
+
+    logger.log(
+        level,
+        event,
+        extra=context,
+    )
 
 
 # Read the DATABASE_URL from environment
@@ -38,6 +128,61 @@ MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 
 app = FastAPI()
+
+
+@app.middleware("http")
+async def add_correlation_id(
+    request: Request,
+    call_next,
+):
+    timer_started_at = monotonic()
+
+    incoming_id = request.headers.get(
+        "X-Correlation-ID"
+    )
+
+    try:
+        correlation_id = (
+            str(UUID(incoming_id))
+            if incoming_id
+            else str(uuid4())
+        )
+    except ValueError:
+        correlation_id = str(uuid4())
+
+    request.state.correlation_id = correlation_id
+
+    response = await call_next(request)
+
+    route = request.scope.get("route")
+    path = getattr(
+        route,
+        "path",
+        request.url.path,
+    )
+
+    duration_ms = round(
+        (monotonic() - timer_started_at) * 1000,
+        3,
+    )
+
+    logger.info(
+        "http_request_completed",
+        extra={
+            "correlation_id": correlation_id,
+            "method": request.method,
+            "path": path,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+        },
+    )
+
+    response.headers["X-Correlation-ID"] = (
+        correlation_id
+    )
+
+    return response
+
 
 PROCESSING_RUNS = Counter(
     "platform_processing_runs_total",
@@ -96,7 +241,6 @@ class ProcessingResponse(BaseModel):
     row_count: int
     validation_status: str
 
-
 class ProcessingRunResponse(BaseModel):
     id: UUID
     upload_id: UUID
@@ -107,7 +251,6 @@ class ProcessingRunResponse(BaseModel):
     curated_object_key: str | None
     validation_status: str | None
     error_message: str | None
-
 
 @app.get("/health")
 def health_check():
@@ -351,7 +494,6 @@ def create_processing_run(upload_id: UUID):
             )
             return cursor.fetchone()
 
-
 def complete_processing_run(
     run_id: UUID,
     row_count: int,
@@ -439,7 +581,6 @@ def fail_processing_run(
             )
             return cursor.fetchone()
 
-
 def try_to_record_processing_failure(
     run_id: UUID,
     error_message: str,
@@ -465,7 +606,6 @@ def try_to_record_processing_failure(
             "Processing failure could not be recorded",
             extra={"run_id": str(run_id)},
         )
-
 
 def read_and_validate_csv(file: UploadFile):
     """
@@ -497,7 +637,6 @@ def read_and_validate_csv(file: UploadFile):
 
     return filename, content_type, content
 
-
 def get_processing_run(run_id: UUID):
     """
     Return one processing run by its UUID.
@@ -522,7 +661,6 @@ def get_processing_run(run_id: UUID):
                 (run_id,),
             )
             return cursor.fetchone()
-
 
 @app.post(
     "/datasets/{dataset_id}/uploads",
@@ -597,7 +735,6 @@ def upload_dataset_file(
             detail="Upload registration failed.",
         )
 
-
 def record_processing_metrics(
     outcome: str,
     timer_started_at: float,
@@ -614,13 +751,16 @@ def record_processing_metrics(
         PROCESSED_ROWS.inc(row_count or 0)
         LAST_SUCCESSFUL_PROCESSING.set(time())
 
-
 @app.post(
     "/uploads/{upload_id}/process",
     response_model=ProcessingResponse,
     status_code=200,
 )
-def process_upload(upload_id: UUID):
+
+def process_upload(
+    upload_id: UUID,
+    request: Request,
+):
     """
     Convert one raw CSV upload into curated Parquet.
     """
@@ -648,6 +788,13 @@ def process_upload(upload_id: UUID):
             "Processing run creation failed",
             extra={"upload_id": str(upload_id)},
         )
+        log_processing_event(
+            level=logging.ERROR,
+            event="processing_failed",
+            correlation_id=request.state.correlation_id,
+            upload_id=upload_id,
+            outcome="internal_failed",
+        )
         record_processing_metrics(
             outcome="internal_failed",
             timer_started_at=timer_started_at,
@@ -658,6 +805,15 @@ def process_upload(upload_id: UUID):
         )
 
     run_id = processing_run["id"]
+
+    log_processing_event(
+        level=logging.INFO,
+        event="processing_started",
+        correlation_id=request.state.correlation_id,
+        upload_id=upload_id,
+        run_id=run_id,
+    )
+
     try:
         csv_content = download_raw_object(
             upload["object_key"]
@@ -677,6 +833,16 @@ def process_upload(upload_id: UUID):
                 "Raw object storage is unavailable."
             ),
         )
+
+        log_processing_event(
+            level=logging.ERROR,
+            event="processing_failed",
+            correlation_id=request.state.correlation_id,
+            upload_id=upload_id,
+            run_id=run_id,
+            outcome="storage_failed",
+        )
+
         record_processing_metrics(
             outcome="storage_failed",
             timer_started_at=timer_started_at,
@@ -700,11 +866,19 @@ def process_upload(upload_id: UUID):
                 validation_failed=True,
             )
 
+            log_processing_event(
+                level=logging.WARNING,
+                event="processing_failed",
+                correlation_id=request.state.correlation_id,
+                upload_id=upload_id,
+                run_id=run_id,
+                outcome="validation_failed",
+            )
+
             record_processing_metrics(
                 outcome="validation_failed",
                 timer_started_at=timer_started_at,
             )
-
             raise HTTPException(
                 status_code=422,
                 detail=(
@@ -723,6 +897,14 @@ def process_upload(upload_id: UUID):
             validation_failed=True,
         )
 
+        log_processing_event(
+            level=logging.WARNING,
+            event="processing_failed",
+            correlation_id=request.state.correlation_id,
+            upload_id=upload_id,
+            run_id=run_id,
+            outcome="validation_failed",
+        )
         record_processing_metrics(
             outcome="validation_failed",
             timer_started_at=timer_started_at,
@@ -737,7 +919,6 @@ def process_upload(upload_id: UUID):
         f'{upload["id"]}/'
         "data.parquet"
     )
-
     try:
         upload_curated_object(
             curated_object_key,
@@ -753,11 +934,19 @@ def process_upload(upload_id: UUID):
             ),
         )
 
+        log_processing_event(
+            level=logging.ERROR,
+            event="processing_failed",
+            correlation_id=request.state.correlation_id,
+            upload_id=upload_id,
+            run_id=run_id,
+            outcome="storage_failed",
+        )
+
         record_processing_metrics(
             outcome="storage_failed",
             timer_started_at=timer_started_at,
         )
-
         raise HTTPException(
             status_code=503,
             detail="Curated object storage is unavailable.",
@@ -783,6 +972,15 @@ def process_upload(upload_id: UUID):
             },
         )
 
+        log_processing_event(
+            level=logging.ERROR,
+            event="processing_failed",
+            correlation_id=request.state.correlation_id,
+            upload_id=upload_id,
+            run_id=run_id,
+            outcome="internal_failed",
+        )
+
         record_processing_metrics(
             outcome="internal_failed",
             timer_started_at=timer_started_at,
@@ -799,6 +997,15 @@ def process_upload(upload_id: UUID):
         row_count=row_count,
     )
 
+    log_processing_event(
+        level=logging.INFO,
+        event="processing_succeeded",
+        correlation_id=request.state.correlation_id,
+        upload_id=upload_id,
+        run_id=run_id,
+        outcome="succeeded",
+        row_count=row_count,
+    )
     return {
         "run_id": run_id,
         "upload_id": upload_id,
@@ -833,14 +1040,12 @@ def db_health_check():
             },
         )
 
-
 @app.get("/metrics", include_in_schema=False)
 def metrics():
     return Response(
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST,
     )
-
 
 @app.get(
     "/processing-runs/{run_id}",

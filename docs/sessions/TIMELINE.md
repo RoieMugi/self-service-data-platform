@@ -277,6 +277,28 @@ requests and processing runs can be traced across diagnostic events.
 
 ---
 
+## **Session 012: Structured Logging and Correlation IDs**
+
+**Date:** 2026-09-02
+**Status:** Complete
+
+**What:** Added request correlation and machine-readable diagnostic events.
+
+**Key achievements:**
+- Validated caller-supplied correlation UUIDs and generated safe replacements
+- Returned the effective correlation ID in response headers
+- Added structured request-completion and processing lifecycle events
+- Covered success, validation, storage, and internal processing outcomes
+- Verified a live correlated validation failure against the Dockerized API
+- Expanded the automated suite to 43 passing tests
+
+**Why it matters:** Operators can trace one request and processing attempt across
+diagnostic events and connect aggregate metrics to a specific durable run.
+
+**Next:** Add Grafana dashboards and basic alerting over Prometheus metrics.
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -291,6 +313,7 @@ requests and processing runs can be traced across diagnostic events.
 | 008 | Track runs & validation | S009 | 2026-09-01 | Complete |
 | 009 | Automated tests & GitHub Actions | S010 | 2026-09-01 | Complete |
 | 010 | Observability & docs | S011 | 2026-09-02 | Complete |
+| 011 | Structured logging and correlation IDs | S012 | 2026-09-02 | Complete |
 
 ---
 
@@ -339,13 +362,15 @@ data-platform-engineering/
 - Dataset registration through `POST /datasets`
 - Validation and duplicate-name protection
 - Raw CSV storage and curated Parquet processing
-- 33 automated tests
+- 43 automated tests
 - Automatic pytest execution with GitHub Actions
 - Docker image builds and runs
 - Prometheus metrics collection with persistent Docker storage
+- Structured JSON request and processing lifecycle logs
+- Correlation IDs in response headers and diagnostic events
 
 **What's next:**
-- Add structured logging and correlation identifiers
+- Add Grafana dashboards and basic alerting
 - Later, separate processing into a queued worker and add event streaming when
   multiple platform consumers need the same lifecycle events
 
@@ -358,11 +383,13 @@ data-platform-engineering/
 3. **Data pipeline** (sessions 6–8): Implement registration, storage, and core ETL logic
 4. **Run visibility** (session 9): Persist processing and validation outcomes
 5. **Automation** (checkpoint 009): GitHub Actions and CI
-6. **Observability** (checkpoint 010): Metrics and operational documentation
-7. **Event-driven evolution** (post-MVP): Add queued workers, then publish
+6. **Observability** (checkpoints 010-011): Metrics, structured logs, and
+   correlated diagnostics
+7. **Visualization and alerting**: Add Grafana dashboards and basic alerts
+8. **Event-driven evolution** (post-MVP): Add queued workers, then publish
    replayable platform events for quality, lineage, catalog, metrics, and
    notification consumers
 
 ---
 
-**Last updated:** 2026-09-02 (Session 011)
+**Last updated:** 2026-09-02 (Session 012)
