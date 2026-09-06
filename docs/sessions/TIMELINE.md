@@ -299,6 +299,32 @@ diagnostic events and connect aggregate metrics to a specific durable run.
 
 ---
 
+## **Session 013: Grafana Dashboard and Alerting**
+
+**Date:** 2026-09-06
+**Status:** Complete
+
+**What:** Added a provisioned Grafana dashboard and Prometheus alert rules over
+the platform's existing operational metrics.
+
+**Key achievements:**
+- Provisioned Grafana's Prometheus data source and seven-panel dashboard from
+  version-controlled files
+- Visualized processing outcomes, duration, row throughput, last success time,
+  API CPU usage, and API memory usage
+- Added alerts for storage/internal failures and sustained high memory
+- Evaluated and rejected cAdvisor because Docker Desktop did not expose reliable
+  per-Compose-service labels
+- Verified a firing infrastructure alert through a controlled MinIO outage
+- Preserved all 43 passing automated tests
+
+**Why it matters:** Operators now have a durable visual overview and automatic
+failure detection before processing is separated into an asynchronous worker.
+
+**Next:** Introduce an asynchronous job queue and worker.
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -314,6 +340,7 @@ diagnostic events and connect aggregate metrics to a specific durable run.
 | 009 | Automated tests & GitHub Actions | S010 | 2026-09-01 | Complete |
 | 010 | Observability & docs | S011 | 2026-09-02 | Complete |
 | 011 | Structured logging and correlation IDs | S012 | 2026-09-02 | Complete |
+| 012 | Grafana dashboards and basic alerting | S013 | 2026-09-06 | Complete |
 
 ---
 
@@ -370,8 +397,8 @@ data-platform-engineering/
 - Correlation IDs in response headers and diagnostic events
 
 **What's next:**
-- Add Grafana dashboards and basic alerting
-- Later, separate processing into a queued worker and add event streaming when
+- Separate processing into a queued worker
+- Later, add event streaming when
   multiple platform consumers need the same lifecycle events
 
 ---
@@ -385,11 +412,11 @@ data-platform-engineering/
 5. **Automation** (checkpoint 009): GitHub Actions and CI
 6. **Observability** (checkpoints 010-011): Metrics, structured logs, and
    correlated diagnostics
-7. **Visualization and alerting**: Add Grafana dashboards and basic alerts
+7. **Visualization and alerting**: Grafana dashboards and basic alerts
 8. **Event-driven evolution** (post-MVP): Add queued workers, then publish
    replayable platform events for quality, lineage, catalog, metrics, and
    notification consumers
 
 ---
 
-**Last updated:** 2026-09-02 (Session 012)
+**Last updated:** 2026-09-06 (Session 013)

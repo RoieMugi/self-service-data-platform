@@ -1,0 +1,29 @@
+groups:
+  - name: data-platform
+    rules:
+      - alert: PlatformProcessingInfrastructureFailure
+        expr: |
+          sum(
+            increase(
+              platform_processing_runs_total{
+                outcome=~"storage_failed|internal_failed"
+              }[5m]
+            )
+          ) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Platform processing infrastructure failure
+          description: At least one storage or internal processing failure occurred in the last five minutes.
+
+      - alert: ApiHighMemoryUsage
+        expr: |
+          process_resident_memory_bytes{
+            job="data-platform-api"
+          } > 268435456
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: API process memory is high
+          description: The API process has used more than 256 MiB for five minutes.

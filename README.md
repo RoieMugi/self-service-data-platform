@@ -62,6 +62,7 @@ such as data quality, lineage, catalog, metrics, or notifications.
 - [x] 009 - Add automated tests and GitHub Actions.
 - [x] 010 - Add basic operational metrics and documentation.
 - [x] 011 - Add structured logging and correlation identifiers.
+- [x] 012 - Add Grafana dashboards and basic alerting.
 - [ ] Post-MVP - Move processing to an asynchronous worker and job queue.
 - [ ] Post-MVP - Publish durable platform events for independent consumers.
 
@@ -72,11 +73,28 @@ such as data quality, lineage, catalog, metrics, or notifications.
 
 ## Current status
 
-Checkpoint 011 is complete. FastAPI now emits structured JSON request and
-processing lifecycle logs, and propagates validated correlation identifiers
-through response headers and diagnostic events. The automated suite contains 43
-passing tests. The proposed next increment is Grafana dashboards and basic
-alerting over the existing Prometheus metrics.
+Checkpoint 012 is complete. Grafana now provisions a version-controlled
+operational dashboard over the existing Prometheus metrics, while Prometheus
+evaluates alerts for infrastructure processing failures and sustained API
+memory usage. The automated suite contains 43 passing tests. The proposed next
+increment is separating processing from the API with an asynchronous job queue
+and worker.
+
+## Grafana and alerting
+
+Grafana is available locally at `http://localhost:3000` after running
+`docker compose up -d`. Its Prometheus data source and `Data Platform
+Operations` dashboard are provisioned from files in `grafana/`.
+
+Prometheus evaluates two initial alert rules:
+
+- `PlatformProcessingInfrastructureFailure` detects recent storage or internal
+  processing failures.
+- `ApiHighMemoryUsage` detects API process memory above 256 MiB for five
+  minutes.
+
+These rules expose alert state in Prometheus and Grafana. External notification
+delivery is deferred until an Alertmanager or Grafana contact point is added.
 
 ## Structured logging
 
@@ -103,6 +121,17 @@ The application exposes these custom metrics:
 - `platform_processed_rows_total` counts rows from successful runs.
 - `platform_last_successful_processing_timestamp_seconds` records the most
   recent successful completion time.
+
+## Recent activity (2026-09-06, Session 013)
+
+- Added Grafana with persistent storage and file-based provisioning.
+- Added a seven-panel operational dashboard for processing and API resources.
+- Added Prometheus alerts for infrastructure failures and sustained memory use.
+- Rejected cAdvisor after verifying that Docker Desktop exposed only broad
+  WSL2 control groups rather than reliable Compose-service labels.
+- Verified a successful run and a firing infrastructure alert through a
+  controlled MinIO outage.
+- Re-ran the automated suite with 43 passing tests.
 
 ## Recent activity (2026-09-02, Session 012)
 

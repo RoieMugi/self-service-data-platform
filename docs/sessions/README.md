@@ -30,6 +30,7 @@ These records are part of the project, not temporary notes.
 | [010](010-continuous-integration.md) | 2026-09-01 | Automate tests with GitHub Actions | Complete |
 | [011](011-operational-metrics.md) | 2026-09-02 | Add operational metrics with Prometheus | Complete |
 | [012](012-structured-logging.md) | 2026-09-02 | Add structured logging and correlation IDs | Complete |
+| [013](013-grafana-dashboard-alerting.md) | 2026-09-06 | Add Grafana dashboards and basic alerting | Complete |
 
 ## Quick Links
 
