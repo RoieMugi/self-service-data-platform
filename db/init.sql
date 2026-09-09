@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS processing_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     upload_id UUID NOT NULL REFERENCES uploads(id),
     status TEXT NOT NULL,
-    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     row_count BIGINT,
     curated_object_key TEXT,
@@ -30,7 +31,7 @@ CREATE TABLE IF NOT EXISTS processing_runs (
     error_message TEXT,
 
     CONSTRAINT processing_runs_status_check
-        CHECK (status IN ('running', 'succeeded', 'failed')),
+        CHECK (status IN ('running', 'succeeded', 'queued', 'failed')),
 
     CONSTRAINT processing_runs_validation_status_check
         CHECK (
@@ -42,6 +43,17 @@ CREATE TABLE IF NOT EXISTS processing_runs (
         CHECK (
             (
                 status = 'running'
+                AND started_at IS NOT NULL
+                AND completed_at IS NULL
+                AND row_count IS NULL
+                AND curated_object_key IS NULL
+                AND validation_status IS NULL
+                AND error_message IS NULL
+            )
+            OR
+            (
+                status = 'queued'
+                AND started_at IS NULL
                 AND completed_at IS NULL
                 AND row_count IS NULL
                 AND curated_object_key IS NULL
@@ -51,9 +63,12 @@ CREATE TABLE IF NOT EXISTS processing_runs (
             OR
             (
                 status = 'succeeded'
+                AND started_at IS NOT NULL
                 AND completed_at IS NOT NULL
+                AND row_count IS NOT NULL
                 AND row_count > 0
                 AND curated_object_key IS NOT NULL
+                AND validation_status IS NOT NULL
                 AND validation_status = 'passed'
                 AND error_message IS NULL
             )

@@ -264,7 +264,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "time() - platform_last_successful_processing_timestamp_seconds",
+          "expr": "time() - max(platform_last_successful_processing_timestamp_seconds > 0)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -359,7 +359,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus "
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "exemplar": false,
@@ -526,7 +526,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.95,\r\n  sum by (le) (\r\n    platform_processing_duration_seconds_bucket\r\n  )\r\n)",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(platform_processing_duration_seconds_bucket{job=\"worker\"}[$__rate_interval])))",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"

@@ -14,15 +14,15 @@ Build a small self-service batch data platform that lets a data engineer:
 5. Produce a curated Parquet dataset.
 6. Inspect run status, row counts, and failures.
 
-## MVP architecture
+## Current local architecture
 
 ```text
 User -> FastAPI -> PostgreSQL metadata
-                 -> Python worker -> MinIO -> DuckDB -> Parquet
-                 -> /metrics -> Prometheus time-series storage
+                 -> RabbitMQ -> Python worker -> MinIO -> DuckDB -> Parquet
+API and worker -> /metrics -> Prometheus -> Grafana
 ```
 
-The first version will run locally with Docker Compose. Kubernetes, Terraform,
+The platform runs locally with Docker Compose. Kubernetes, Terraform,
 Kafka, Spark, authentication, and a web UI are intentionally deferred until the
 basic platform works reliably.
 
@@ -36,7 +36,7 @@ After the synchronous MVP is reliable, evolve processing in two stages:
    components need to react to events such as `upload.stored`,
    `processing.succeeded`, and `processing.failed`.
 
-RabbitMQ is a candidate for distributing processing jobs. Kafka or a
+RabbitMQ now distributes processing jobs. Kafka or a
 Kafka-compatible platform such as Redpanda is a candidate for replayable event
 streams. The final choice will be made when the platform has concrete consumers
 such as data quality, lineage, catalog, metrics, or notifications.
@@ -63,8 +63,45 @@ such as data quality, lineage, catalog, metrics, or notifications.
 - [x] 010 - Add basic operational metrics and documentation.
 - [x] 011 - Add structured logging and correlation identifiers.
 - [x] 012 - Add Grafana dashboards and basic alerting.
-- [ ] Post-MVP - Move processing to an asynchronous worker and job queue.
+- [x] Post-MVP - Integrate asynchronous processing and verify basic queue reliability (Sessions 015-017; mid-processing recovery remains deferred).
 - [ ] Post-MVP - Publish durable platform events for independent consumers.
+
+## Remaining Phase 1 roadmap
+
+Agreed at the start of Session 015 (2026-09-08): plan for **5-7 more sessions,
+including Session 015**, at a similar length to recent sessions. This replaces
+the earlier 12-18-session estimate. These are planned outcomes, not completed work
+or guaranteed deadlines.
+
+After Session 017, **2-4 sessions remain**, targeting completion in Sessions
+019-021. Basic queue reliability is verified. Interrupted-running-run recovery
+and final Grafana visual verification were explicitly deferred by the user.
+
+| Session | Practical outcome |
+|---------|-------------------|
+| 015 | Separate run creation from execution, handle queued runs, and verify the lifecycle. |
+| 016 | Add RabbitMQ and a worker; verify asynchronous submission and processing. |
+| 017 | Verified terminal duplicates, continuation after failure, and queued work across worker downtime; mid-processing recovery deferred. |
+| 018 | Use Terraform to provision a small cloud environment, covering networking, IAM, and secrets as we use them. |
+| 019 | Deploy the platform to Kubernetes; learn configuration, services, and persistent storage through that deployment. |
+| 020-021, if needed | Resolve deployment issues, connect CI deployment, and verify recreation and cleanup. |
+
+The queue-and-worker milestone targets three sessions including Session 015;
+two may be possible if integration goes smoothly. Learn related cloud concepts
+together through this platform rather than assigning each a separate session.
+Record documentation and verification as we go.
+
+**Phase 1 finish line:** a working learning deployment that the user understands
+and can reproduce, including its access controls and persistent data. Production
+hardening, advanced Kubernetes, comprehensive disaster recovery, and durable event
+streaming remain later work. Select the cloud provider and deployment details
+together when approaching the cloud work.
+
+Future sessions should continue from this agreed roadmap and the latest session
+record. Discuss any necessary scope or estimate changes explicitly with the user.
+Keep the learning-together workflow: explain each small task, wait for the user,
+and only edit files or execute implementation steps when instructed. This roadmap
+does not authorize implementing future tasks automatically.
 
 ## Documentation
 
@@ -73,12 +110,59 @@ such as data quality, lineage, catalog, metrics, or notifications.
 
 ## Current status
 
-Checkpoint 012 is complete. Grafana now provisions a version-controlled
-operational dashboard over the existing Prometheus metrics, while Prometheus
-evaluates alerts for infrastructure processing failures and sustained API
-memory usage. The automated suite contains 43 passing tests. The proposed next
-increment is separating processing from the API with an asynchronous job queue
-and worker.
+Session 017 added terminal-run duplicate handling and acknowledgment of recorded
+terminal outcomes after ProcessingError. The user reported 96 passing tests and
+verified live failure followed by success, duplicate delivery without changed
+run timestamps, and queued work completing after worker startup. Next is Session
+018: select cloud/deployment details and begin Terraform. Confirm the worker is
+running first: it was stopped for a cancelled exercise and its final restart
+was requested but not confirmed. See the Session 017 record for limitations.
+
+## Queued-run preparation
+
+`processing_runs` supports `queued`, `running`, `succeeded`, and `failed`.
+`created_at` records submission time; `started_at` remains empty while queued.
+Database constraints enforce consistent timestamps, results, and validation
+fields. The API creates `queued` records; claiming sets `running` and the start
+time together, only when the record is still queued. The run-read API exposes
+`created_at` and allows a null `started_at`.
+
+Migration `db/migrations/003_add_queued_processing_runs.sql` upgrades an existing
+database once. It backfills historical `created_at` values from `started_at`.
+Fresh databases use the updated `db/init.sql`; restarting a populated PostgreSQL
+volume does not rerun initialization. The local migration was applied in
+Session 014 and must not be reapplied there.
+
+`process_upload()` translates `ProcessingError` categories into HTTP responses.
+`submit_processing(upload_id, correlation_id)` validates the upload, creates a
+queued run, and publishes its ID and correlation ID. `execute_processing(run_id,
+correlation_id)` claims that existing run, resolves its upload, and processes it
+without an HTTP request object or creating another run. The worker calls this
+function; the endpoint returns HTTP 202 with `run_id` and initial `queued` status.
+Read `GET /processing-runs/{run_id}` for current state and results.
+
+Publishing uses Pika 1.3.2, a durable queue, persistent messages, publisher
+confirmations, and mandatory routing. HTTP 503 on an unconfirmed submission
+includes the run ID and preserves its state: delivery may be uncertain. Database
+creation and publishing are not atomic; no outbox or automatic recovery exists.
+
+The worker consumes one unacknowledged message at a time. It acknowledges after
+success and skips already-succeeded/failed runs after a refused atomic claim.
+After ProcessingError, it rereads PostgreSQL and acknowledges only a confirmed
+terminal state. Missing/nonterminal runs, failed lookups, and unexpected errors
+remain unacknowledged and stop consumption. Malformed messages are rejected
+without requeueing (currently discarded). Message IDs do not deduplicate work;
+the conditional claim and stored terminal state control duplicate handling.
+
+A worker interrupted after claiming can leave a run stuck at running. Restarting
+alone cannot recover that run. There are no leases, automatic retries, or stuck-run
+recovery tooling. Manual recovery was discussed but not implemented or exercised.
+Worker downtime before claiming was verified; mid-processing crash recovery was
+explicitly deferred. These are limits of the current learning milestone.
+
+RabbitMQ's management UI is at `http://localhost:15672`. The API and worker use
+the internal `rabbitmq:5672` address. The image follows `rabbitmq:4-management`,
+not an exact patch version; the session dashboard displayed RabbitMQ 4.3.5.
 
 ## Grafana and alerting
 
@@ -112,6 +196,15 @@ credentials, and request bodies are not logged.
 Prometheus is available locally at `http://localhost:9090` after running
 `docker compose up -d --build`. It scrapes `http://api:8000/metrics` inside the
 Compose network and stores its time series in the `prometheus_data` volume.
+It also scrapes `http://worker:8001/metrics` with `job="worker"`. Processing
+metrics now update in the worker's registry and reset when that process restarts.
+PostgreSQL remains the durable run history.
+
+The dashboard now selects the latest positive success timestamp across
+processes and uses recent worker histogram rates for processing duration. The
+memory panel's data-source UID trailing space was removed. Final dashboard
+visual verification was skipped. The existing infrastructure alert includes
+worker outcomes; API resource panels and the memory alert remain API-specific.
 
 The application exposes these custom metrics:
 
@@ -121,6 +214,46 @@ The application exposes these custom metrics:
 - `platform_processed_rows_total` counts rows from successful runs.
 - `platform_last_successful_processing_timestamp_seconds` records the most
   recent successful completion time.
+
+## Recent activity (2026-09-09, Session 017)
+
+- Added safe acknowledgment of terminal duplicates and recorded processing failures.
+- Expanded automated coverage from 76 to 96 passing tests, reported by the user.
+- Verified failure followed by valid three-row processing without worker restart.
+- Republished a succeeded run; verified an empty queue and unchanged timestamps.
+- Verified queued work waited with zero consumers and completed after worker startup.
+- Deferred mid-processing interruption/recovery and final Grafana visual checks.
+- See [Session 017](docs/sessions/017-queue-reliability.md) for evidence and follow-up.
+
+## Recent activity (2026-09-09, Session 016)
+
+- Added RabbitMQ, confirmed publishing, HTTP 202 submission, and a separate worker.
+- Verified the same run ID reached succeeded with three rows and was acknowledged.
+- Adapted six execution tests and added 25 queue-related cases: 76 tests pass.
+- Exposed worker metrics and verified a successful-run counter of 1 in Prometheus.
+- Updated dashboard queries; final visual verification remains pending.
+- See [Session 016](docs/sessions/016-rabbitmq-worker.md) for evidence and limitations.
+
+## Recent activity (2026-09-08, Session 015)
+
+- Recorded the agreed remaining Phase 1 roadmap: 5-7 sessions including 015.
+- Made queued runs readable with submission timestamps and null start times.
+- Separated queued-run creation, conditional claiming, and execution by run ID.
+- Expanded the suite from 43 to 51 passing tests, as reported by the user.
+- Verified live three-row processing and refusal to reclaim the completed run.
+- See [Session 015](docs/sessions/015-run-submission-and-execution.md) for the
+  walkthrough, evidence, limitations, and next checkpoint.
+
+## Recent activity (2026-09-08, Session 014)
+
+- Added queued-run constraints and separate submission/start timestamps.
+- Applied migration 003, preserving nine existing processing runs.
+- Verified acceptance of a valid queued row and rejection of an invalid one;
+  both checks were rolled back.
+- Extracted processing execution and centralized HTTP error translation.
+- Preserved 43 passing tests and verified live three-row processing.
+- See [Session 014](docs/sessions/014-queued-run-preparation.md) for decisions,
+  verification, and remaining work.
 
 ## Recent activity (2026-09-06, Session 013)
 

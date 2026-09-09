@@ -30,6 +30,8 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.messaging import publish_processing_run
+
 
 class JsonLogFormatter(logging.Formatter):
     contextual_fields = (
@@ -241,11 +243,16 @@ class ProcessingResponse(BaseModel):
     row_count: int
     validation_status: str
 
+class ProcessingSubmissionResponse(BaseModel):
+    run_id: UUID
+    status: str
+
 class ProcessingRunResponse(BaseModel):
     id: UUID
     upload_id: UUID
     status: str
-    started_at: datetime
+    created_at: datetime
+    started_at: datetime | None
     completed_at: datetime | None
     row_count: int | None
     curated_object_key: str | None
@@ -473,7 +480,7 @@ def get_upload(upload_id: UUID):
 
 def create_processing_run(upload_id: UUID):
     """
-    Create and return a running processing record.
+    Create and return a queued processing record.
     """
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
@@ -483,14 +490,38 @@ def create_processing_run(upload_id: UUID):
                     upload_id,
                     status
                 )
-                VALUES (%s, 'running')
+                VALUES (%s, 'queued')
                 RETURNING
                     id,
                     upload_id,
                     status,
+                    created_at,
                     started_at;
                 """,
                 (upload_id,),
+            )
+            return cursor.fetchone()
+
+def claim_processing_run(run_id: UUID):
+    """Start a run only if it is still queued."""
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                UPDATE processing_runs
+                SET
+                    status = 'running',
+                    started_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                  AND status = 'queued'
+                RETURNING
+                    id,
+                    upload_id,
+                    status,
+                    created_at,
+                    started_at;
+                """,
+                (run_id,),
             )
             return cursor.fetchone()
 
@@ -649,6 +680,7 @@ def get_processing_run(run_id: UUID):
                     id,
                     upload_id,
                     status,
+                    created_at,
                     started_at,
                     completed_at,
                     row_count,
@@ -751,32 +783,61 @@ def record_processing_metrics(
         PROCESSED_ROWS.inc(row_count or 0)
         LAST_SUCCESSFUL_PROCESSING.set(time())
 
+
+class ProcessingError(Exception):
+    def __init__(self, outcome: str, message: str):
+        super().__init__(message)
+        self.outcome = outcome
+        self.message = message
+
+
 @app.post(
     "/uploads/{upload_id}/process",
-    response_model=ProcessingResponse,
-    status_code=200,
+    response_model=ProcessingSubmissionResponse,
+    status_code=202,
 )
-
 def process_upload(
     upload_id: UUID,
     request: Request,
 ):
-    """
-    Convert one raw CSV upload into curated Parquet.
-    """
+    try:
+        return submit_processing(
+            upload_id=upload_id,
+            correlation_id=request.state.correlation_id,
+        )
+    except ProcessingError as exc:
+        status_code = {
+            "validation_failed": 422,
+            "storage_failed": 503,
+            "internal_failed": 500,
+            "upload_not_found": 404,
+            "submission_failed": 503,
+        }.get(exc.outcome, 500)
+
+        raise HTTPException(
+            status_code=status_code,
+            detail=exc.message,
+        ) from exc
+
+
+def submit_processing(
+    upload_id: UUID,
+    correlation_id: str,
+):
+    """Validate the upload, create a queued run, and publish it."""
     try:
         upload = get_upload(upload_id)
     except Exception:
         logger.exception("Upload lookup failed")
-        raise HTTPException(
-            status_code=500,
-            detail="Upload lookup failed.",
+        raise ProcessingError(
+            outcome="internal_failed",
+            message="Upload lookup failed.",
         )
 
     if upload is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Upload not found.",
+        raise ProcessingError(
+            outcome="upload_not_found",
+            message="Upload not found.",
         )
 
     timer_started_at = monotonic()
@@ -791,7 +852,7 @@ def process_upload(
         log_processing_event(
             level=logging.ERROR,
             event="processing_failed",
-            correlation_id=request.state.correlation_id,
+            correlation_id=correlation_id,
             upload_id=upload_id,
             outcome="internal_failed",
         )
@@ -799,17 +860,111 @@ def process_upload(
             outcome="internal_failed",
             timer_started_at=timer_started_at,
         )
-        raise HTTPException(
-            status_code=500,
-            detail="Processing run creation failed.",
+        raise ProcessingError(
+            outcome="internal_failed",
+            message="Processing run creation failed.",
         )
 
-    run_id = processing_run["id"]
+    try:
+        publish_processing_run(
+            run_id=processing_run["id"],
+            correlation_id=correlation_id,
+        )
+    except Exception:
+        logger.exception(
+            "Processing run publication failed",
+            extra={
+                "run_id": str(processing_run["id"]),
+                "correlation_id": correlation_id,
+            },
+        )
+        raise ProcessingError(
+            outcome="submission_failed",
+            message=(
+                "Processing submission could not be confirmed. "
+                f"Check processing run {processing_run['id']} before retrying."
+            ),
+        )
+
+    return ProcessingSubmissionResponse(
+        run_id=processing_run["id"],
+        status="queued",
+    )
+
+
+def execute_processing(
+    run_id: UUID,
+    correlation_id: str,
+):
+    """Claim and process an existing queued run."""
+    timer_started_at = monotonic()
+
+    try:
+        claimed_run = claim_processing_run(run_id)
+    except Exception:
+        logger.exception(
+            "Processing run claim failed",
+            extra={"run_id": str(run_id)},
+        )
+        raise ProcessingError(
+            outcome="internal_failed",
+            message="Processing run claim failed.",
+        )
+
+    if claimed_run is None:
+        existing_run = get_processing_run(run_id)
+
+        if existing_run is not None and existing_run["status"] in ("succeeded", "failed"):
+            logger.info(
+                "Skipping terminal processing run",
+                extra={
+                    "run_id": str(run_id),
+                    "status": existing_run["status"],
+                },
+            )
+            return
+
+        raise ProcessingError(
+            outcome="internal_failed",
+            message="Processing run is not available to start.",
+        )
+
+    upload_id = claimed_run["upload_id"]
+
+    try:
+        upload = get_upload(upload_id)
+        if upload is None:
+            raise RuntimeError("The run's upload was not found.")
+    except Exception:
+        logger.exception(
+            "Processing upload lookup failed",
+            extra={"run_id": str(run_id)},
+        )
+        try_to_record_processing_failure(
+            run_id=run_id,
+            error_message="Processing upload lookup failed.",
+        )
+        log_processing_event(
+            level=logging.ERROR,
+            event="processing_failed",
+            correlation_id=correlation_id,
+            upload_id=upload_id,
+            run_id=run_id,
+            outcome="internal_failed",
+        )
+        record_processing_metrics(
+            outcome="internal_failed",
+            timer_started_at=timer_started_at,
+        )
+        raise ProcessingError(
+            outcome="internal_failed",
+            message="Processing upload lookup failed.",
+        )
 
     log_processing_event(
         level=logging.INFO,
         event="processing_started",
-        correlation_id=request.state.correlation_id,
+        correlation_id=correlation_id,
         upload_id=upload_id,
         run_id=run_id,
     )
@@ -837,7 +992,7 @@ def process_upload(
         log_processing_event(
             level=logging.ERROR,
             event="processing_failed",
-            correlation_id=request.state.correlation_id,
+            correlation_id=correlation_id,
             upload_id=upload_id,
             run_id=run_id,
             outcome="storage_failed",
@@ -847,9 +1002,9 @@ def process_upload(
             outcome="storage_failed",
             timer_started_at=timer_started_at,
         )
-        raise HTTPException(
-            status_code=503,
-            detail="Raw object storage is unavailable.",
+        raise ProcessingError(
+            outcome="storage_failed",
+            message="Raw object storage is unavailable.",
         )
 
     try:
@@ -869,7 +1024,7 @@ def process_upload(
             log_processing_event(
                 level=logging.WARNING,
                 event="processing_failed",
-                correlation_id=request.state.correlation_id,
+                correlation_id=correlation_id,
                 upload_id=upload_id,
                 run_id=run_id,
                 outcome="validation_failed",
@@ -879,11 +1034,9 @@ def process_upload(
                 outcome="validation_failed",
                 timer_started_at=timer_started_at,
             )
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "The uploaded CSV contains no data rows."
-                ),
+            raise ProcessingError(
+                outcome="validation_failed",
+                message="The uploaded CSV contains no data rows.",
             )
 
     except duckdb.Error:
@@ -900,7 +1053,7 @@ def process_upload(
         log_processing_event(
             level=logging.WARNING,
             event="processing_failed",
-            correlation_id=request.state.correlation_id,
+            correlation_id=correlation_id,
             upload_id=upload_id,
             run_id=run_id,
             outcome="validation_failed",
@@ -909,9 +1062,9 @@ def process_upload(
             outcome="validation_failed",
             timer_started_at=timer_started_at,
         )
-        raise HTTPException(
-            status_code=422,
-            detail="The uploaded CSV could not be processed.",
+        raise ProcessingError(
+            outcome="validation_failed",
+            message="The uploaded CSV could not be processed.",
         )
 
     curated_object_key = (
@@ -937,7 +1090,7 @@ def process_upload(
         log_processing_event(
             level=logging.ERROR,
             event="processing_failed",
-            correlation_id=request.state.correlation_id,
+            correlation_id=correlation_id,
             upload_id=upload_id,
             run_id=run_id,
             outcome="storage_failed",
@@ -947,9 +1100,9 @@ def process_upload(
             outcome="storage_failed",
             timer_started_at=timer_started_at,
         )
-        raise HTTPException(
-            status_code=503,
-            detail="Curated object storage is unavailable.",
+        raise ProcessingError(
+            outcome="storage_failed",
+            message="Curated object storage is unavailable.",
         )
 
     try:
@@ -975,7 +1128,7 @@ def process_upload(
         log_processing_event(
             level=logging.ERROR,
             event="processing_failed",
-            correlation_id=request.state.correlation_id,
+            correlation_id=correlation_id,
             upload_id=upload_id,
             run_id=run_id,
             outcome="internal_failed",
@@ -986,9 +1139,9 @@ def process_upload(
             timer_started_at=timer_started_at,
         )
 
-        raise HTTPException(
-            status_code=500,
-            detail="Processing result tracking failed.",
+        raise ProcessingError(
+            outcome="internal_failed",
+            message="Processing result tracking failed.",
         )
 
     record_processing_metrics(
@@ -1000,7 +1153,7 @@ def process_upload(
     log_processing_event(
         level=logging.INFO,
         event="processing_succeeded",
-        correlation_id=request.state.correlation_id,
+        correlation_id=correlation_id,
         upload_id=upload_id,
         run_id=run_id,
         outcome="succeeded",

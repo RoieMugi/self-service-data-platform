@@ -433,7 +433,7 @@ def test_get_upload_returns_upload_metadata(monkeypatch):
     _, parameters = fake_cursor.execute.call_args.args
     assert parameters == (upload_id,)
 
-def test_create_processing_run_inserts_running_record(
+def test_create_processing_run_inserts_queued_record(
     monkeypatch,
 ):
     upload_id = UUID(
@@ -446,7 +446,9 @@ def test_create_processing_run_inserts_running_record(
     expected_run = {
         "id": run_id,
         "upload_id": upload_id,
-        "status": "running",
+        "status": "queued",
+        "started_at": None,
+        "created_at": datetime(2026, 9, 8, 10, 0, tzinfo=timezone.utc),
     }
 
     fake_cursor = MagicMock()
@@ -473,6 +475,122 @@ def test_create_processing_run_inserts_running_record(
 
     _, parameters = fake_cursor.execute.call_args.args
     assert parameters == (upload_id,)
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_claim_processing_run_returns_claim_or_none(monkeypatch, available):
+    run_id = UUID("79d674f8-9a9b-4b31-8951-31c381b21429")
+    expected = {"id": run_id, "status": "running"} if available else None
+    fake_cursor = MagicMock()
+    fake_cursor.fetchone.return_value = expected
+    fake_connection = MagicMock()
+    fake_connection.__enter__.return_value = fake_connection
+    fake_connection.cursor.return_value.__enter__.return_value = fake_cursor
+    monkeypatch.setattr(main_module, "get_db_connection", lambda: fake_connection)
+
+    assert main_module.claim_processing_run(run_id) == expected
+    fake_cursor.execute.assert_called_once()
+    query, parameters = fake_cursor.execute.call_args.args
+    normalized_query = " ".join(query.split())
+    assert "WHERE id = %s AND status = 'queued'" in normalized_query
+    assert "status = 'running'" in normalized_query
+    assert "started_at = CURRENT_TIMESTAMP" in normalized_query
+    assert parameters == (run_id,)
+
+
+@pytest.mark.parametrize("claim_error", [False, True])
+def test_execute_processing_stops_when_claim_fails(monkeypatch, claim_error):
+    run_id = UUID("79d674f8-9a9b-4b31-8951-31c381b21429")
+    fake_claim = Mock(return_value=None)
+    if claim_error:
+        fake_claim.side_effect = RuntimeError("Database unavailable")
+    monkeypatch.setattr(main_module, "claim_processing_run", fake_claim)
+    fake_run_lookup = Mock(return_value=None)
+    monkeypatch.setattr(main_module, "get_processing_run", fake_run_lookup)
+    downstream = {}
+    for name in (
+        "create_processing_run", "get_upload", "download_raw_object",
+        "convert_csv_to_parquet", "upload_curated_object",
+        "complete_processing_run", "try_to_record_processing_failure",
+    ):
+        downstream[name] = Mock()
+        monkeypatch.setattr(main_module, name, downstream[name])
+
+    with pytest.raises(main_module.ProcessingError) as caught:
+        main_module.execute_processing(run_id, "test-correlation")
+
+    assert caught.value.outcome == "internal_failed"
+    fake_claim.assert_called_once_with(run_id)
+    if claim_error:
+        fake_run_lookup.assert_not_called()
+    else:
+        fake_run_lookup.assert_called_once_with(run_id)
+    for mocked in downstream.values():
+        mocked.assert_not_called()
+
+
+@pytest.mark.parametrize("lookup_error", [False, True])
+def test_execute_processing_records_failure_after_claimed_upload_lookup(
+    monkeypatch, lookup_error,
+):
+    run_id = UUID("79d674f8-9a9b-4b31-8951-31c381b21429")
+    upload_id = UUID("cd49f308-e39e-4d87-a7f0-f72f75bde678")
+    monkeypatch.setattr(
+        main_module, "claim_processing_run",
+        Mock(return_value={"id": run_id, "upload_id": upload_id}),
+    )
+    fake_lookup = Mock(return_value=None)
+    if lookup_error:
+        fake_lookup.side_effect = RuntimeError("Database unavailable")
+    monkeypatch.setattr(main_module, "get_upload", fake_lookup)
+    fake_failure = Mock()
+    fake_download = Mock()
+    fake_metrics = Mock()
+    monkeypatch.setattr(main_module, "try_to_record_processing_failure", fake_failure)
+    monkeypatch.setattr(main_module, "download_raw_object", fake_download)
+    monkeypatch.setattr(main_module, "record_processing_metrics", fake_metrics)
+
+    with pytest.raises(main_module.ProcessingError) as caught:
+        main_module.execute_processing(run_id, "test-correlation")
+
+    assert caught.value.outcome == "internal_failed"
+    fake_lookup.assert_called_once_with(upload_id)
+    fake_failure.assert_called_once_with(
+        run_id=run_id, error_message="Processing upload lookup failed.",
+    )
+    fake_download.assert_not_called()
+    assert fake_metrics.call_args.kwargs["outcome"] == "internal_failed"
+
+
+def test_execute_processing_uses_existing_run_without_creating_another(monkeypatch):
+    run_id = UUID("79d674f8-9a9b-4b31-8951-31c381b21429")
+    upload_id = UUID("cd49f308-e39e-4d87-a7f0-f72f75bde678")
+    fake_create = Mock()
+    fake_claim = Mock(return_value={"id": run_id, "upload_id": upload_id})
+    fake_lookup = Mock(return_value={
+        "id": upload_id, "dataset_id": "dataset", "object_key": "raw.csv",
+    })
+    fake_complete = Mock(return_value={"status": "succeeded", "validation_status": "passed"})
+    monkeypatch.setattr(main_module, "create_processing_run", fake_create)
+    monkeypatch.setattr(main_module, "claim_processing_run", fake_claim)
+    monkeypatch.setattr(main_module, "get_upload", fake_lookup)
+    monkeypatch.setattr(main_module, "download_raw_object", Mock(return_value=b"csv"))
+    monkeypatch.setattr(main_module, "convert_csv_to_parquet", Mock(return_value=(b"PAR1", 1)))
+    monkeypatch.setattr(main_module, "upload_curated_object", Mock())
+    monkeypatch.setattr(main_module, "complete_processing_run", fake_complete)
+    monkeypatch.setattr(main_module, "record_processing_metrics", Mock())
+
+    result = main_module.execute_processing(run_id, "test-correlation")
+
+    fake_create.assert_not_called()
+    fake_claim.assert_called_once_with(run_id)
+    fake_lookup.assert_called_once_with(upload_id)
+    assert result["run_id"] == run_id
+    assert result["status"] == "succeeded"
+    fake_complete.assert_called_once_with(
+        run_id=run_id, row_count=1,
+        curated_object_key=f"dataset/{upload_id}/data.parquet",
+    )
 
 
 def test_download_raw_object_returns_bytes_and_releases_connection(
@@ -580,7 +698,7 @@ def test_upload_curated_object_stores_parquet_in_curated_bucket(
         "content_type": "application/vnd.apache.parquet",
     }
 
-def test_process_upload_returns_curated_result(monkeypatch):
+def test_execute_processing_returns_curated_result(monkeypatch):
     upload_id = UUID(
         "cd49f308-e39e-4d87-a7f0-f72f75bde678"
     )
@@ -625,7 +743,7 @@ def test_process_upload_returns_curated_result(monkeypatch):
         return_value={
             "id": run_id,
             "upload_id": upload_id,
-            "status": "running",
+            "status": "queued",
         }
     )
 
@@ -634,6 +752,10 @@ def test_process_upload_returns_curated_result(monkeypatch):
         "create_processing_run",
         fake_create_run,
     )
+    fake_claim_run = Mock(
+        return_value={"id": run_id, "upload_id": upload_id, "status": "running"}
+    )
+    monkeypatch.setattr(main_module, "claim_processing_run", fake_claim_run)
 
     fake_download = Mock(return_value=csv_content)
     fake_conversion = Mock(
@@ -687,21 +809,17 @@ def test_process_upload_returns_curated_result(monkeypatch):
         lambda: 10.0,
     )
 
-    response = client.post(
-        f"/uploads/{upload_id}/process",
-        headers={
-            "X-Correlation-ID": correlation_id,
-        },
+    result = main_module.execute_processing(
+        run_id=run_id, correlation_id=correlation_id,
     )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "upload_id": str(upload_id),
-        "dataset_id": str(dataset_id),
+    assert result == {
+        "upload_id": upload_id,
+        "dataset_id": dataset_id,
         "object_key": curated_object_key,
         "format": "parquet",
         "row_count": 1,
-        "run_id": str(run_id),
+        "run_id": run_id,
         "status": "succeeded",
         "validation_status": "passed",
     }
@@ -722,7 +840,8 @@ def test_process_upload_returns_curated_result(monkeypatch):
         parquet_content,
     )
 
-    fake_create_run.assert_called_once_with(upload_id)
+    fake_create_run.assert_not_called()
+    fake_claim_run.assert_called_once_with(run_id)
 
     fake_complete_run.assert_called_once_with(
         run_id=run_id,
@@ -793,7 +912,7 @@ def test_process_upload_returns_404_when_upload_does_not_exist(
     fake_conversion.assert_not_called()
     fake_curated_upload.assert_not_called()
 
-def test_process_upload_returns_422_for_unprocessable_csv(
+def test_execute_processing_rejects_unprocessable_csv(
     monkeypatch,
 ):
     upload_id = UUID(
@@ -835,7 +954,7 @@ def test_process_upload_returns_422_for_unprocessable_csv(
         return_value={
             "id": run_id,
             "upload_id": upload_id,
-            "status": "running",
+            "status": "queued",
         }
     )
     fake_record_failure = Mock()
@@ -845,6 +964,10 @@ def test_process_upload_returns_422_for_unprocessable_csv(
         "create_processing_run",
         fake_create_run,
     )
+    fake_claim_run = Mock(
+        return_value={"id": run_id, "upload_id": upload_id, "status": "running"}
+    )
+    monkeypatch.setattr(main_module, "claim_processing_run", fake_claim_run)
     monkeypatch.setattr(
         main_module,
         "try_to_record_processing_failure",
@@ -885,17 +1008,14 @@ def test_process_upload_returns_422_for_unprocessable_csv(
         lambda: 10.0,
     )
 
-    response = client.post(
-        f"/uploads/{upload_id}/process",
-        headers={
-            "X-Correlation-ID": correlation_id,
-        },
-    )
+    with pytest.raises(main_module.ProcessingError) as exc_info:
+        main_module.execute_processing(
+            run_id=run_id, correlation_id=correlation_id,
+        )
 
-    assert response.status_code == 422
-    assert response.json() == {
-        "detail": "The uploaded CSV could not be processed.",
-    }
+    assert exc_info.value.outcome == "validation_failed"
+    assert exc_info.value.message == "The uploaded CSV could not be processed."
+
 
     fake_metrics.assert_called_once_with(
         outcome="validation_failed",
@@ -904,7 +1024,8 @@ def test_process_upload_returns_422_for_unprocessable_csv(
 
     fake_curated_upload.assert_not_called()
 
-    fake_create_run.assert_called_once_with(upload_id)
+    fake_create_run.assert_not_called()
+    fake_claim_run.assert_called_once_with(run_id)
 
     fake_record_failure.assert_called_once_with(
         run_id=run_id,
@@ -923,7 +1044,7 @@ def test_process_upload_returns_422_for_unprocessable_csv(
         outcome="validation_failed",
     )
 
-def test_process_upload_returns_503_when_curated_upload_fails(
+def test_execute_processing_records_curated_upload_failure(
     monkeypatch,
 ):
     upload_id = UUID(
@@ -966,7 +1087,7 @@ def test_process_upload_returns_503_when_curated_upload_fails(
         return_value={
             "id": run_id,
             "upload_id": upload_id,
-            "status": "running",
+            "status": "queued",
         }
     )
 
@@ -977,6 +1098,10 @@ def test_process_upload_returns_503_when_curated_upload_fails(
         "create_processing_run",
         fake_create_run,
     )
+    fake_claim_run = Mock(
+        return_value={"id": run_id, "upload_id": upload_id, "status": "running"}
+    )
+    monkeypatch.setattr(main_module, "claim_processing_run", fake_claim_run)
     monkeypatch.setattr(
         main_module,
         "try_to_record_processing_failure",
@@ -1021,25 +1146,21 @@ def test_process_upload_returns_503_when_curated_upload_fails(
         lambda: 10.0,
     )
 
-    response = client.post(
-        f"/uploads/{upload_id}/process",
-        headers={
-            "X-Correlation-ID": correlation_id,
-        },
-    )
+    with pytest.raises(main_module.ProcessingError) as exc_info:
+        main_module.execute_processing(
+            run_id=run_id, correlation_id=correlation_id,
+        )
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": (
-            "Curated object storage is unavailable."
-        ),
-    }
+    assert exc_info.value.outcome == "storage_failed"
+    assert exc_info.value.message == "Curated object storage is unavailable."
+
 
     fake_metrics.assert_called_once_with(
         outcome="storage_failed",
         timer_started_at=10.0,
     )
-    fake_create_run.assert_called_once_with(upload_id)
+    fake_create_run.assert_not_called()
+    fake_claim_run.assert_called_once_with(run_id)
 
     fake_record_failure.assert_called_once_with(
         run_id=run_id,
@@ -1057,7 +1178,7 @@ def test_process_upload_returns_503_when_curated_upload_fails(
         outcome="storage_failed",
     )
 
-def test_process_upload_returns_503_when_raw_download_fails(
+def test_execute_processing_records_raw_download_failure(
     monkeypatch,
 ):
     upload_id = UUID(
@@ -1100,7 +1221,7 @@ def test_process_upload_returns_503_when_raw_download_fails(
         return_value={
             "id": run_id,
             "upload_id": upload_id,
-            "status": "running",
+            "status": "queued",
         }
     )
 
@@ -1111,6 +1232,10 @@ def test_process_upload_returns_503_when_raw_download_fails(
         "create_processing_run",
         fake_create_run,
     )
+    fake_claim_run = Mock(
+        return_value={"id": run_id, "upload_id": upload_id, "status": "running"}
+    )
+    monkeypatch.setattr(main_module, "claim_processing_run", fake_claim_run)
     monkeypatch.setattr(
         main_module,
         "try_to_record_processing_failure",
@@ -1157,25 +1282,21 @@ def test_process_upload_returns_503_when_raw_download_fails(
         lambda: 10.0,
     )
 
-    response = client.post(
-        f"/uploads/{upload_id}/process",
-        headers={
-            "X-Correlation-ID": correlation_id,
-        },
-    )
+    with pytest.raises(main_module.ProcessingError) as exc_info:
+        main_module.execute_processing(
+            run_id=run_id, correlation_id=correlation_id,
+        )
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": (
-            "Raw object storage is unavailable."
-        ),
-    }
+    assert exc_info.value.outcome == "storage_failed"
+    assert exc_info.value.message == "Raw object storage is unavailable."
+
 
     fake_metrics.assert_called_once_with(
         outcome="storage_failed",
         timer_started_at=10.0,
     )
-    fake_create_run.assert_called_once_with(upload_id)
+    fake_create_run.assert_not_called()
+    fake_claim_run.assert_called_once_with(run_id)
 
     fake_record_failure.assert_called_once_with(
         run_id=run_id,
@@ -1355,6 +1476,15 @@ def test_read_processing_run_returns_run(monkeypatch):
     upload_id = UUID(
         "cd49f308-e39e-4d87-a7f0-f72f75bde678"
     )
+    created_at = datetime(
+        2026,
+        9,
+        1,
+        10,
+        0,
+        0,
+        tzinfo=timezone.utc,
+    )
     started_at = datetime(
         2026,
         9,
@@ -1379,6 +1509,7 @@ def test_read_processing_run_returns_run(monkeypatch):
             "id": run_id,
             "upload_id": upload_id,
             "status": "succeeded",
+            "created_at": created_at,
             "started_at": started_at,
             "completed_at": completed_at,
             "row_count": 42,
@@ -1405,6 +1536,7 @@ def test_read_processing_run_returns_run(monkeypatch):
         "id": str(run_id),
         "upload_id": str(upload_id),
         "status": "succeeded",
+        "created_at": "2026-09-01T10:00:00Z",
         "started_at": "2026-09-01T10:00:00Z",
         "completed_at": "2026-09-01T10:00:05Z",
         "row_count": 42,
@@ -1416,6 +1548,45 @@ def test_read_processing_run_returns_run(monkeypatch):
     }
 
     fake_get_run.assert_called_once_with(run_id)
+
+def test_read_processing_run_returns_queued_run(monkeypatch):
+    run_id = UUID("79d674f8-9a9b-4b31-8951-31c381b21429")
+    upload_id = UUID("cd49f308-e39e-4d87-a7f0-f72f75bde678")
+    created_at = datetime(2026, 9, 8, 10, 0, tzinfo=timezone.utc)
+
+    fake_get_run = Mock(
+        return_value={
+            "id": run_id,
+            "upload_id": upload_id,
+            "status": "queued",
+            "created_at": created_at,
+            "started_at": None,
+            "completed_at": None,
+            "row_count": None,
+            "curated_object_key": None,
+            "validation_status": None,
+            "error_message": None,
+        }
+    )
+    monkeypatch.setattr(main_module, "get_processing_run", fake_get_run)
+
+    response = client.get(f"/processing-runs/{run_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": str(run_id),
+        "upload_id": str(upload_id),
+        "status": "queued",
+        "created_at": "2026-09-08T10:00:00Z",
+        "started_at": None,
+        "completed_at": None,
+        "row_count": None,
+        "curated_object_key": None,
+        "validation_status": None,
+        "error_message": None,
+    }
+    fake_get_run.assert_called_once_with(run_id)
+
 
 def test_read_processing_run_returns_404_when_missing(
     monkeypatch,
@@ -1457,6 +1628,7 @@ def test_get_processing_run_returns_database_record(
         "id": run_id,
         "upload_id": upload_id,
         "status": "running",
+        "created_at": datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc),
     }
 
     fake_cursor = MagicMock()
@@ -1649,7 +1821,7 @@ def test_record_processing_metrics_records_failure(
     fake_last_success.set.assert_not_called()
 
 
-def test_process_upload_logs_validation_failure_for_empty_rows(
+def test_execute_processing_logs_validation_failure_for_empty_rows(
     monkeypatch,
 ):
     upload_id = UUID(
@@ -1683,6 +1855,10 @@ def test_process_upload_logs_validation_failure_for_empty_rows(
         "create_processing_run",
         lambda requested_id: {"id": run_id},
     )
+    fake_claim_run = Mock(
+        return_value={"id": run_id, "upload_id": upload_id, "status": "running"}
+    )
+    monkeypatch.setattr(main_module, "claim_processing_run", fake_claim_run)
     monkeypatch.setattr(
         main_module,
         "download_raw_object",
@@ -1719,12 +1895,14 @@ def test_process_upload_logs_validation_failure_for_empty_rows(
         lambda: 10.0,
     )
 
-    response = client.post(
-        f"/uploads/{upload_id}/process",
-        headers={"X-Correlation-ID": correlation_id},
-    )
+    with pytest.raises(main_module.ProcessingError) as exc_info:
+        main_module.execute_processing(
+            run_id=run_id, correlation_id=correlation_id,
+        )
 
-    assert response.status_code == 422
+    assert exc_info.value.outcome == "validation_failed"
+    assert exc_info.value.message == "The uploaded CSV contains no data rows."
+
     fake_curated_upload.assert_not_called()
     fake_record_failure.assert_called_once_with(
         run_id=run_id,
@@ -1743,7 +1921,7 @@ def test_process_upload_logs_validation_failure_for_empty_rows(
     )
 
 
-def test_process_upload_logs_internal_result_tracking_failure(
+def test_execute_processing_logs_internal_result_tracking_failure(
     monkeypatch,
 ):
     upload_id = UUID(
@@ -1775,6 +1953,10 @@ def test_process_upload_logs_internal_result_tracking_failure(
         "create_processing_run",
         lambda requested_id: {"id": run_id},
     )
+    fake_claim_run = Mock(
+        return_value={"id": run_id, "upload_id": upload_id, "status": "running"}
+    )
+    monkeypatch.setattr(main_module, "claim_processing_run", fake_claim_run)
     monkeypatch.setattr(
         main_module,
         "download_raw_object",
@@ -1815,15 +1997,14 @@ def test_process_upload_logs_internal_result_tracking_failure(
         lambda: 10.0,
     )
 
-    response = client.post(
-        f"/uploads/{upload_id}/process",
-        headers={"X-Correlation-ID": correlation_id},
-    )
+    with pytest.raises(main_module.ProcessingError) as exc_info:
+        main_module.execute_processing(
+            run_id=run_id, correlation_id=correlation_id,
+        )
 
-    assert response.status_code == 500
-    assert response.json() == {
-        "detail": "Processing result tracking failed.",
-    }
+    assert exc_info.value.outcome == "internal_failed"
+    assert exc_info.value.message == "Processing result tracking failed."
+
     fake_processing_log.assert_any_call(
         level=logging.ERROR,
         event="processing_failed",

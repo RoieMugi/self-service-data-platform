@@ -30,11 +30,53 @@ services:
       MINIO_RAW_BUCKET: raw
       MINIO_CURATED_BUCKET: curated
       MINIO_SECURE: "false"
+      RABBITMQ_URL: amqp://platform_user:platform_rabbitmq_password@rabbitmq:5672/
+      RABBITMQ_QUEUE: processing_runs
     depends_on:
       db:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: data-platform-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: platform_user
+      RABBITMQ_DEFAULT_PASS: platform_rabbitmq_password
+    ports:
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build: .
+    container_name: data-platform-worker
+    command: python -m app.worker
+    environment:
+      DATABASE_URL: postgresql://platform_user:platform_pass@db:5432/platform_db
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: platform_minio
+      MINIO_SECRET_KEY: platform_minio_password
+      MINIO_RAW_BUCKET: raw
+      MINIO_CURATED_BUCKET: curated
+      MINIO_SECURE: "false"
+      RABBITMQ_URL: amqp://platform_user:platform_rabbitmq_password@rabbitmq:5672/
+      RABBITMQ_QUEUE: processing_runs
+    depends_on:
+      db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
 
   minio:
     image: minio/minio:RELEASE.2025-07-23T15-54-02Z
@@ -98,3 +140,4 @@ volumes:
   minio_data:
   prometheus_data:
   grafana_data:
+  rabbitmq_data:

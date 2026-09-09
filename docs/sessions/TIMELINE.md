@@ -325,6 +325,93 @@ failure detection before processing is separated into an asynchronous worker.
 
 ---
 
+## **Session 014: Queued Runs and Processing Separation**
+
+**Date:** 2026-09-08
+**Status:** Complete for this preparation increment
+
+**What:** Prepared the run schema for queued work and separated HTTP handling
+from synchronous processing execution.
+
+**Key achievements:**
+- Applied migration 003 with submission timestamps and queued-state constraints
+- Preserved nine historical runs and verified valid/invalid queued inserts
+- Added explicit start timestamps to current synchronous run creation
+- Extracted processing execution with correlation IDs and domain errors
+- Preserved 43 passing tests and verified live three-row processing
+
+**Why it matters:** The database can represent waiting jobs, and processing no
+longer depends directly on HTTP requests or exceptions. Execution still happens
+inside the API container and creates its own run.
+
+**Next:** Separate run creation from execution before introducing the queue
+and worker. See [Session 014](014-queued-run-preparation.md).
+
+---
+
+## **Session 015: Run Submission and Execution**
+
+**Date:** 2026-09-08
+**Status:** Complete for this increment; asynchronous deployment remains pending
+
+**What:** Separated queued-run creation from execution of an existing run ID.
+
+**Key achievements:**
+- Exposed creation timestamps and nullable start timestamps through run lookup
+- Added a conditional queued-to-running claim with an explicit start timestamp
+- Split submission and execution while preserving synchronous HTTP behavior
+- Expanded the automated suite to 51 passing tests, reported by the user
+- Verified live processing of three rows and rejection of a completed-run claim
+- Agreed a 5-7-session remaining Phase 1 roadmap, including Session 015
+
+**Why it matters:** A future worker can execute an already submitted run without
+creating a second record. PostgreSQL controls whether a queued run can start.
+
+**Next:** Add RabbitMQ and a worker in Session 016. Follow the agreed roadmap in
+the root README. See [Session 015](015-run-submission-and-execution.md).
+
+---
+
+## **Session 016: RabbitMQ and Asynchronous Worker**
+
+**Date:** 2026-09-09
+**Status:** Complete for integration; reliability remains Session 017 work
+
+**What:** Moved processing into a separate RabbitMQ consumer with HTTP 202
+submission, preserving the existing run ID and correlation context.
+
+**Key achievements:**
+- Added a durable queue, persistent messages, publisher confirmations, and a worker
+- Verified live three-row processing and acknowledgment with one consumer remaining
+- Adapted six execution tests and added 25 queue cases; the user verified 76 passing tests
+- Exposed worker metrics on port 8001; verified Prometheus UP and success counter 1
+- Updated dashboard aggregation/duration queries and corrected a data-source UID
+- Recorded uncertain publication and duplicate/restart recovery as unfinished work
+
+**Next:** Session 017 reliability checks. See [Session 016](016-rabbitmq-worker.md).
+The roadmap leaves 3-5 sessions, targeting Phase 1 completion in 019-021.
+
+---
+## **Session 017: Queue Reliability**
+
+**Date:** 2026-09-09
+**Status:** Complete for agreed scope; mid-processing recovery deferred
+
+**What:** Added terminal duplicate handling and acknowledgment after confirmed
+terminal processing errors, preserving atomic claiming and durable run history.
+
+**Key achievements:**
+- User reported 96 passing automated tests, up from 76
+- Verified a failed CSV run followed by successful three-row processing without restart
+- Verified live duplicate acknowledgment with unchanged run timestamps
+- Verified queued work with zero consumers completed after worker startup
+- User deferred interrupted-running-run recovery and final Grafana visual checks
+
+**Next:** Session 018 cloud selection and Terraform; 2-4 sessions remain, targeting
+Phase 1 completion in 019-021. Confirm worker startup after the cancelled exercise.
+See [Session 017](017-queue-reliability.md) for evidence and remaining limitations.
+
+---
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -365,22 +452,20 @@ collects every 15 seconds into persistent local time-series storage.
 
 ## **Project State**
 
-**Current codebase:**
-```
-data-platform-engineering/
-├── app/
-│   ├── __init__.py
-│   └── main.py                    # FastAPI app
-├── Dockerfile                     # Docker recipe
-├── requirements.txt              # Dependencies
-├── test_health.py                # Tests
-├── README.md                     # Project overview
-├── Platform_Engineering_Study_Notes.md
-└── docs/
-    └── sessions/
-        ├── 001-project-foundation.md
-        ├── 002-minimal-fastapi.md
-        └── 003-containerize-api.md
+**Current codebase (main paths):**
+```text
+app/main.py          API, run lifecycle, and shared processing
+app/messaging.py     RabbitMQ publisher and connection settings
+app/worker.py        Consumer and worker metrics server
+db/                  Initialization and migrations
+Dockerfile           Shared API/worker image
+docker-compose.yml   Local services
+prometheus.yml       API and worker scraping
+prometheus-alerts.yml
+grafana/            Dashboard and provisioning (directory)
+test_health.py       API and processing tests
+test_messaging.py    Submission, publisher, and worker tests
+docs/sessions/       Session history
 ```
 
 **What works now:**
@@ -389,15 +474,23 @@ data-platform-engineering/
 - Dataset registration through `POST /datasets`
 - Validation and duplicate-name protection
 - Raw CSV storage and curated Parquet processing
-- 43 automated tests
+- 96 automated tests (latest result reported by the user in Session 017)
 - Automatic pytest execution with GitHub Actions
 - Docker image builds and runs
 - Prometheus metrics collection with persistent Docker storage
 - Structured JSON request and processing lifecycle logs
 - Correlation IDs in response headers and diagnostic events
+- Queued-run schema with submission and execution timestamps
+- Separate HTTP wrapper, submission, and execution by existing run ID
+- Conditional queued-to-running claiming and readable queued-run timestamps
+- RabbitMQ publication, HTTP 202 submission, and a separate worker
+- Worker metrics scraped by Prometheus; final dashboard visual check pending
 
 **What's next:**
-- Separate processing into a queued worker
+- Session 018: choose cloud/deployment details and begin Terraform
+- Confirm worker is running after the cancelled interruption exercise
+- Interrupted-running-run recovery and final Grafana visual verification remain deferred
+- Continue the agreed Phase 1 roadmap in the root README
 - Later, add event streaming when
   multiple platform consumers need the same lifecycle events
 
@@ -419,4 +512,4 @@ data-platform-engineering/
 
 ---
 
-**Last updated:** 2026-09-06 (Session 013)
+**Last updated:** 2026-09-09 (Session 017)

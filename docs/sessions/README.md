@@ -31,6 +31,10 @@ These records are part of the project, not temporary notes.
 | [011](011-operational-metrics.md) | 2026-09-02 | Add operational metrics with Prometheus | Complete |
 | [012](012-structured-logging.md) | 2026-09-02 | Add structured logging and correlation IDs | Complete |
 | [013](013-grafana-dashboard-alerting.md) | 2026-09-06 | Add Grafana dashboards and basic alerting | Complete |
+| [014](014-queued-run-preparation.md) | 2026-09-08 | Prepare queued runs and separate HTTP from execution | Complete |
+| [015](015-run-submission-and-execution.md) | 2026-09-08 | Separate queued-run submission, claiming, and execution | Complete |
+| [016](016-rabbitmq-worker.md) | 2026-09-09 | RabbitMQ, asynchronous worker, and worker metrics | Integration complete; reliability pending |
+| [017](017-queue-reliability.md) | 2026-09-09 | Terminal duplicates, recorded failures, and queued-worker restart behavior | Complete for agreed scope; mid-processing recovery deferred |
 
 ## Quick Links
 
