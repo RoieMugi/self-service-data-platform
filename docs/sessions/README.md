@@ -35,6 +35,11 @@ These records are part of the project, not temporary notes.
 | [015](015-run-submission-and-execution.md) | 2026-09-08 | Separate queued-run submission, claiming, and execution | Complete |
 | [016](016-rabbitmq-worker.md) | 2026-09-09 | RabbitMQ, asynchronous worker, and worker metrics | Integration complete; reliability pending |
 | [017](017-queue-reliability.md) | 2026-09-09 | Terminal duplicates, recorded failures, and queued-worker restart behavior | Complete for agreed scope; mid-processing recovery deferred |
+| [018](018-local-terraform.md) | 2026-09-09 | Local Terraform lifecycle, source-built API, database connection, and rebuild triggers | Complete for local learning scope |
+| [019](019-local-kubernetes.md) | 2026-09-09 to 2026-09-11 | Local Kubernetes API, Secret, Pod replacement, storage and cleanup | Complete for agreed learning scope |
+| [020](020-query-and-saved-tables.md) | 2026-09-11 to 2026-09-14 | Dataset queries, saved tables, and guided comparison demo | Complete |
+| [021](021-stored-file-downloads.md) | 2026-09-14 | Original CSV, processing-output and saved-table downloads | Complete |
+| [022](022-csv-query-export.md) | 2026-09-14 | Full bounded CSV query-result exports | Complete; backend feature extension finished |
 
 ## Quick Links
 

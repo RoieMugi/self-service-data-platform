@@ -4,6 +4,17 @@
 
 All sessions are recorded in `docs/sessions/`. This timeline tracks what was built, when, and why.
 
+**Latest, Sessions 021-022 (2026-09-14):** stored-file downloads and CSV query-result
+exports are implemented and live-verified; 200 tests pass. The backend feature
+extension is complete. Next: local deployment wrap-up in 023-024 if needed.
+See [021](021-stored-file-downloads.md) and [022](022-csv-query-export.md).
+
+**Session 020 (2026-09-14):** query previews and persistent saved tables
+implemented and verified with 140 passing tests and a live Compose workflow.
+Saved data survived API restart. See [Session 020](020-query-and-saved-tables.md).
+This supersedes older forward-looking estimates: downloads are 021-022, then
+deployment wrap-up in 023-024 if needed.
+
 ---
 
 ## **Session 001: Project Foundation**
@@ -412,6 +423,53 @@ Phase 1 completion in 019-021. Confirm worker startup after the cancelled exerci
 See [Session 017](017-queue-reliability.md) for evidence and remaining limitations.
 
 ---
+## **Session 018: Local Terraform Simulation**
+
+**Date:** 2026-09-09
+**Status:** Complete for local learning scope
+
+**What:** Practised Terraform with Docker, then deployed our source-built API and
+connected it to the existing Compose database.
+
+**Key achievements:**
+- Revised the cloud roadmap to a local simulation with no cloud budget
+- Installed Terraform 1.15.8 and initialized Docker provider 4.6.0
+- Verified Nginx creation, port-change replacement, and destruction
+- Verified API health and PostgreSQL connectivity on localhost:8089
+- Added source builds, seven file-hash triggers, and Git exclusions
+- Verified a temporary source edit proposed replacement; reverted it without apply
+- Final user-reported plan: no changes; no new pytest result
+
+**Next:** Session 019 local Kubernetes. Provisionally 1-3 sessions remain for the
+revised local milestone. See [Session 018](018-local-terraform.md).
+
+---
+
+## **Session 019: Local Kubernetes**
+
+**Dates:** 2026-09-09 through 2026-09-11
+**Status:** Complete for agreed learning scope
+
+**What:** Ran our API in Docker Desktop kind v1.36.1, connected it to the
+Compose database through a Secret, and practised persistent storage.
+
+**Key achievements:**
+
+- Resolved image availability by exporting/copying/importing into the node runtime
+- Verified Deployment, Service, browser health, and automatic Pod replacement
+- Verified Secret-injected database URL and successful /db-health
+- Verified a 1Gi PVC preserved a file across standalone Pod recreation
+- Deleted practice Pod/PVC and verified backing PV NotFound
+- Discussed LAN user access, dataset queries, and CSV downloads as future work
+- ConfigMaps remained conceptual; no new pytest result
+
+**Next:** Review reproduction and local milestone wrap-up in Session 020.
+Expanded query/CSV workflow estimate: 3-5 additional learning sessions, separate
+from deployment wrap-up; implementation mode remains undecided.
+See [Session 019](019-local-kubernetes.md) and [Kubernetes guide](../../kubernetes/README.md).
+
+---
+
 ## **Completed Checkpoints**
 
 | # | Checkpoint | Session | Date | Status |
@@ -474,7 +532,8 @@ docs/sessions/       Session history
 - Dataset registration through `POST /datasets`
 - Validation and duplicate-name protection
 - Raw CSV storage and curated Parquet processing
-- 96 automated tests (latest result reported by the user in Session 017)
+- 200 automated tests passed by Session 022
+- Bounded SQL previews, persistent saved tables, catalog lookup and derived tables
 - Automatic pytest execution with GitHub Actions
 - Docker image builds and runs
 - Prometheus metrics collection with persistent Docker storage
@@ -487,8 +546,11 @@ docs/sessions/       Session history
 - Worker metrics scraped by Prometheus; final dashboard visual check pending
 
 **What's next:**
-- Session 018: choose cloud/deployment details and begin Terraform
-- Confirm worker is running after the cancelled interruption exercise
+- Sessions 020-022 complete; next local deployment wrap-up in 023-024 if needed
+- Local Terraform and Kubernetes API labs verified; Compose still owns the database
+- Original local milestone target: 019-021; final wrap-up to review after 019
+- Queries and saved tables verified; LAN and GUI remain future work
+- Worker running and live processing verified in Session 020
 - Interrupted-running-run recovery and final Grafana visual verification remain deferred
 - Continue the agreed Phase 1 roadmap in the root README
 - Later, add event streaming when
@@ -512,4 +574,4 @@ docs/sessions/       Session history
 
 ---
 
-**Last updated:** 2026-09-09 (Session 017)
+**Last updated:** 2026-09-14 (Sessions 020-022 closed separately)

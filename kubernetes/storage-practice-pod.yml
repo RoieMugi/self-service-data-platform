@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: storage-practice
+spec:
+  containers:
+    - name: storage-practice
+      image: data-platform-api:terraform-lab
+      imagePullPolicy: Never
+      command: ["python", "-c", "import time; time.sleep(86400)"]
+      volumeMounts:
+        - name: practice-data
+          mountPath: /practice
+  volumes:
+    - name: practice-data
+      persistentVolumeClaim:
+        claimName: storage-practice

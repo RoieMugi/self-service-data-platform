@@ -6,6 +6,8 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic, time
+from typing import Any
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import duckdb
@@ -14,6 +16,7 @@ from fastapi import (
     FastAPI,
     File,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
@@ -31,6 +34,13 @@ from psycopg.rows import dict_row
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.messaging import publish_processing_run
+from app.query_executor import (
+    MAX_PARQUET_BYTES,
+    QueryError,
+    execute_csv_query,
+    execute_query,
+    execute_saved_query,
+)
 
 
 class JsonLogFormatter(logging.Formatter):
@@ -259,6 +269,56 @@ class ProcessingRunResponse(BaseModel):
     validation_status: str | None
     error_message: str | None
 
+
+class QueryRequest(BaseModel):
+    """Preview input; SQL execution restrictions are enforced by the executor."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    sql: str = Field(min_length=1, max_length=10000)
+    max_rows: int = Field(default=100, ge=1, le=1000, strict=True)
+
+
+class QueryResponse(BaseModel):
+    """Rows follow column order, preserving even duplicate SQL column names."""
+
+    columns: list[str]
+    rows: list[list[Any]]
+    row_count: int = Field(ge=0)
+    truncated: bool
+
+
+class CsvQueryRequest(BaseModel):
+    """Full query export; no preview row limit or saved-table name."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    sql: str = Field(min_length=1, max_length=10000)
+
+
+class SaveQueryTableRequest(BaseModel):
+    """Save the query result, independently of the preview's row limit."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    sql: str = Field(min_length=1, max_length=10000)
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class SavedTableResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    source_run_id: UUID | None
+    source_table_id: UUID | None
+    query_sql: str
+    object_key: str
+    row_count: int
+    size_bytes: int
+    created_at: datetime
+
+
 @app.get("/health")
 def health_check():
     """
@@ -356,6 +416,41 @@ def download_raw_object(object_key: str) -> bytes:
     finally:
         response.close()
         response.release_conn()
+
+
+def download_query_artifact(object_key: str) -> bytes:
+    """Read a curated artifact without downloading an unbounded object."""
+    return download_bounded_object(
+        MINIO_CURATED_BUCKET, object_key, MAX_PARQUET_BYTES,
+        "Dataset exceeds the 20 MiB query input limit.",
+    )
+
+
+def download_bounded_object(
+    bucket: str,
+    object_key: str,
+    max_bytes: int,
+    size_error: str,
+) -> bytes:
+    """Read at most the size limit plus one byte and always release the response."""
+    response = get_minio_client().get_object(
+        bucket,
+        object_key,
+    )
+    try:
+        content = response.read(max_bytes + 1)
+    finally:
+        try:
+            response.close()
+        finally:
+            response.release_conn()
+
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=size_error,
+        )
+    return content
 
 
 def convert_csv_to_parquet(csv_content: bytes) -> tuple[bytes, int]:
@@ -1228,3 +1323,300 @@ def read_processing_run(run_id: UUID):
         )
 
     return processing_run
+
+
+@app.post(
+    "/processing-runs/{run_id}/query",
+    response_model=QueryResponse,
+    status_code=200,
+)
+def query_processing_run(run_id: UUID, query: QueryRequest):
+    """Preview a successful run's Parquet output using SELECT over dataset.
+
+    This does not save a new table. The executor's deadline covers its child
+    process, not the preceding database lookup or object download.
+    """
+    return preview_artifact(processing_artifact_key(run_id), query)
+
+
+def processing_artifact_key(run_id: UUID) -> str:
+    processing_run = read_processing_run(run_id)
+    if processing_run["status"] != "succeeded":
+        raise HTTPException(
+            status_code=409,
+            detail="Only succeeded processing runs can be queried.",
+        )
+    object_key = processing_run["curated_object_key"]
+    if not object_key:
+        raise HTTPException(
+            status_code=409,
+            detail="Processing run has no curated artifact.",
+        )
+    return object_key
+
+
+def load_query_artifact(object_key: str) -> bytes:
+    try:
+        return download_query_artifact(object_key)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Query artifact download failed",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Query artifact could not be retrieved.",
+        )
+
+
+def preview_artifact(object_key: str, query: QueryRequest):
+    parquet_content = load_query_artifact(object_key)
+    try:
+        return execute_query(parquet_content, query.sql, query.max_rows)
+    except QueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        logger.exception(
+            "Query execution failed",
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Query execution failed.",
+        )
+
+
+def get_saved_table(table_id: UUID):
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SELECT * FROM saved_tables WHERE id = %s", (table_id,))
+            return cursor.fetchone()
+
+
+@app.get("/tables/{table_id}", response_model=SavedTableResponse)
+def read_saved_table(table_id: UUID):
+    try:
+        table = get_saved_table(table_id)
+    except Exception:
+        logger.exception("Saved table lookup failed")
+        raise HTTPException(status_code=503, detail="Table catalog unavailable.")
+    if table is None:
+        raise HTTPException(status_code=404, detail="Saved table not found.")
+    return table
+
+
+@app.get("/tables", response_model=list[SavedTableResponse])
+def list_saved_tables(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    "SELECT * FROM saved_tables ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
+                    (limit, offset),
+                )
+                return cursor.fetchall()
+    except Exception:
+        logger.exception("Saved table listing failed")
+        raise HTTPException(status_code=503, detail="Table catalog unavailable.")
+
+
+@app.post("/tables/{table_id}/query", response_model=QueryResponse)
+def query_saved_table(table_id: UUID, query: QueryRequest):
+    table = read_saved_table(table_id)
+    return preview_artifact(table["object_key"], query)
+
+
+@app.get("/tables/{table_id}/download")
+def download_saved_table(table_id: UUID):
+    table = read_saved_table(table_id)
+    content = load_query_artifact(table["object_key"])
+
+    return Response(
+        content=content,
+        media_type="application/vnd.apache.parquet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{table_id}.parquet"'
+        },
+    )
+
+
+@app.get("/uploads/{upload_id}/download")
+def download_uploaded_csv(upload_id: UUID):
+    """Return the original CSV bytes, without processing or changing the upload."""
+    try:
+        upload = get_upload(upload_id)
+    except Exception:
+        logger.exception("Upload download lookup failed")
+        raise HTTPException(status_code=503, detail="Upload metadata unavailable.")
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+
+    try:
+        content = download_bounded_object(
+            MINIO_RAW_BUCKET, upload["object_key"], MAX_UPLOAD_SIZE,
+            "Upload exceeds the 10 MiB download limit.",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Raw upload download failed")
+        raise HTTPException(status_code=503, detail="Uploaded file could not be retrieved.")
+
+    # Remove path components/control characters; encode the Unicode filename as
+    # a header parameter and keep an ASCII UUID fallback for older clients.
+    name = (upload["original_filename"] or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(character for character in name if character.isprintable()).strip()
+    if not name or name in (".", ".."):
+        name = f"{upload_id}.csv"
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{upload_id}.csv"; '
+                f"filename*=UTF-8''{quote(name, safe='')}"
+            ),
+        },
+    )
+
+
+@app.get("/processing-runs/{run_id}/download")
+def download_processing_output(run_id: UUID):
+    """Return a succeeded run's existing Parquet output without rerunning it."""
+    object_key = processing_artifact_key(run_id)
+    content = load_query_artifact(object_key)
+    return Response(
+        content=content,
+        media_type="application/vnd.apache.parquet",
+        headers={"Content-Disposition": f'attachment; filename="{run_id}.parquet"'},
+    )
+
+
+def export_query_csv(object_key: str, query: CsvQueryRequest, source_id: UUID):
+    content = load_query_artifact(object_key)
+    try:
+        csv_content, row_count = execute_csv_query(content, query.sql)
+    except QueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("CSV query export failed")
+        raise HTTPException(status_code=500, detail="CSV query export failed.")
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="query-{source_id}.csv"',
+            "X-Row-Count": str(row_count),
+        },
+    )
+
+
+@app.post(
+    "/processing-runs/{run_id}/query/csv",
+    response_class=Response,
+    responses={200: {"content": {"text/csv": {}}, "description": "CSV query result"}},
+)
+def export_processing_query(run_id: UUID, query: CsvQueryRequest):
+    """Download full bounded query results without saving a table."""
+    return export_query_csv(processing_artifact_key(run_id), query, run_id)
+
+
+@app.post(
+    "/tables/{table_id}/query/csv",
+    response_class=Response,
+    responses={200: {"content": {"text/csv": {}}, "description": "CSV query result"}},
+)
+def export_saved_table_query(table_id: UUID, query: CsvQueryRequest):
+    """Export a SELECT over the selected saved table as CSV."""
+    table = read_saved_table(table_id)
+    return export_query_csv(table["object_key"], query, table_id)
+
+
+def insert_saved_table(
+    table_id,
+    request,
+    object_key,
+    row_count,
+    size_bytes,
+    source_run_id,
+    source_table_id,
+):
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """INSERT INTO saved_tables
+                   (id, name, description, source_run_id, source_table_id,
+                    query_sql, object_key, row_count, size_bytes)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+                (table_id, request.name, request.description, source_run_id,
+                 source_table_id, request.sql, object_key, row_count, size_bytes),
+            )
+            return cursor.fetchone()
+
+
+def save_query_table(
+    object_key: str,
+    request: SaveQueryTableRequest,
+    *,
+    source_run_id: UUID | None = None,
+    source_table_id: UUID | None = None,
+):
+    content = load_query_artifact(object_key)
+    try:
+        parquet, row_count = execute_saved_query(content, request.sql)
+    except QueryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("Saved query execution failed")
+        raise HTTPException(status_code=500, detail="Saved query execution failed.")
+
+    table_id = uuid4()
+    output_key = f"tables/{table_id}/data.parquet"
+    try:
+        upload_curated_object(output_key, parquet)
+    except Exception:
+        logger.exception("Saved table upload failed", extra={"table_id": str(table_id)})
+        raise HTTPException(status_code=503, detail="Saved table could not be stored.")
+
+    try:
+        return insert_saved_table(
+            table_id, request, output_key, row_count,
+            len(parquet), source_run_id, source_table_id,
+        )
+    except UniqueViolation:
+        # PostgreSQL rejected this insert: it is safe to remove only our new object.
+        try:
+            get_minio_client().remove_object(MINIO_CURATED_BUCKET, output_key)
+        except Exception:
+            logger.exception("Unregistered table cleanup failed", extra={"table_id": str(table_id)})
+        raise HTTPException(status_code=409, detail="A saved table with that name already exists.")
+    except Exception:
+        # A lost commit response is ambiguous. Preserve the object in case the row
+        # committed; deleting it could corrupt a successfully registered table.
+        logger.exception("Saved table registration uncertain", extra={"table_id": str(table_id)})
+        raise HTTPException(status_code=503, detail={
+            "message": "Table registration could not be confirmed. Check this table ID before retrying.",
+            "table_id": str(table_id),
+        })
+
+
+@app.post(
+    "/processing-runs/{run_id}/tables",
+    response_model=SavedTableResponse,
+    status_code=201,
+)
+def save_processing_run_table(run_id: UUID, request: SaveQueryTableRequest):
+    return save_query_table(processing_artifact_key(run_id), request, source_run_id=run_id)
+
+
+@app.post(
+    "/tables/{table_id}/tables",
+    response_model=SavedTableResponse,
+    status_code=201,
+)
+def save_derived_table(table_id: UUID, request: SaveQueryTableRequest):
+    source = read_saved_table(table_id)
+    return save_query_table(source["object_key"], request, source_table_id=table_id)

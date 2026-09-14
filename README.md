@@ -22,9 +22,9 @@ User -> FastAPI -> PostgreSQL metadata
 API and worker -> /metrics -> Prometheus -> Grafana
 ```
 
-The platform runs locally with Docker Compose. Kubernetes, Terraform,
-Kafka, Spark, authentication, and a web UI are intentionally deferred until the
-basic platform works reliably.
+The full platform runs locally with Docker Compose. Separate Terraform and
+Kubernetes API learning labs were verified in Sessions 018-019. Kafka, Spark,
+authentication, and a web UI remain deferred.
 
 ## Post-MVP direction
 
@@ -73,29 +73,34 @@ including Session 015**, at a similar length to recent sessions. This replaces
 the earlier 12-18-session estimate. These are planned outcomes, not completed work
 or guaranteed deadlines.
 
-After Session 017, **2-4 sessions remain**, targeting completion in Sessions
-019-021. Basic queue reliability is verified. Interrupted-running-run recovery
-and final Grafana visual verification were explicitly deferred by the user.
+Session 018 revised the target to a **local, no-cloud-budget learning simulation**.
+The user prioritizes understanding and simulation over production efficiency or
+a large environment. After Session 018, provisionally **1-3 sessions remain**,
+targeting Sessions 019-021 for this revised milestone. Setup and verification may
+affect this estimate. Recovery and final Grafana visuals remain deferred.
 
 | Session | Practical outcome |
 |---------|-------------------|
 | 015 | Separate run creation from execution, handle queued runs, and verify the lifecycle. |
 | 016 | Add RabbitMQ and a worker; verify asynchronous submission and processing. |
 | 017 | Verified terminal duplicates, continuation after failure, and queued work across worker downtime; mid-processing recovery deferred. |
-| 018 | Use Terraform to provision a small cloud environment, covering networking, IAM, and secrets as we use them. |
-| 019 | Deploy the platform to Kubernetes; learn configuration, services, and persistent storage through that deployment. |
-| 020-021, if needed | Resolve deployment issues, connect CI deployment, and verify recreation and cleanup. |
+| 018 | Completed local Terraform lifecycle exercises, source-built API deployment, database connectivity, and source-change detection. |
+| 019 | Completed Kubernetes API, Secret, Pod replacement, storage, and cleanup exercises. |
+| 020 | Implemented and verified dataset queries and persistent saved query tables. |
+| 021 | Implemented and verified original CSV, processing-output Parquet, and saved-table Parquet downloads. |
+| 022 | Implemented and verified full bounded query-result CSV exports from runs and saved tables. |
+| 023-024, if needed | Complete remaining local deployment review, automation practice, recreation verification, and cleanup. |
 
 The queue-and-worker milestone targets three sessions including Session 015;
-two may be possible if integration goes smoothly. Learn related cloud concepts
-together through this platform rather than assigning each a separate session.
+two were considered possible if integration went smoothly. Learn related deployment
+concepts together through this platform rather than assigning each a separate session.
 Record documentation and verification as we go.
 
-**Phase 1 finish line:** a working learning deployment that the user understands
-and can reproduce, including its access controls and persistent data. Production
-hardening, advanced Kubernetes, comprehensive disaster recovery, and durable event
-streaming remain later work. Select the cloud provider and deployment details
-together when approaching the cloud work.
+**Revised Phase 1 finish line:** a local learning deployment that the user
+understands and can reproduce, with basic configuration, access/storage concepts,
+and clear ownership. Infrastructure recreation does not restore data. Cloud
+deployment and cloud IAM practice, production hardening, advanced Kubernetes,
+comprehensive recovery, and durable event streaming remain later work.
 
 Future sessions should continue from this agreed roadmap and the latest session
 record. Discuss any necessary scope or estimate changes explicitly with the user.
@@ -110,13 +115,97 @@ does not authorize implementing future tasks automatically.
 
 ## Current status
 
-Session 017 added terminal-run duplicate handling and acknowledgment of recorded
-terminal outcomes after ProcessingError. The user reported 96 passing tests and
-verified live failure followed by success, duplicate delivery without changed
-run timestamps, and queued work completing after worker startup. Next is Session
-018: select cloud/deployment details and begin Terraform. Confirm the worker is
-running first: it was stopped for a cancelled exercise and its final restart
-was requested but not confirmed. See the Session 017 record for limitations.
+**The three-session backend feature extension (020-022) is complete.** The platform
+supports query previews, persistent derived tables, stored-file downloads, and CSV
+query-result exports. Session 022 passed 200 automated tests and live CSV exports
+from the user's four-customer demo and saved summary. See [the query guide](docs/query-tables.md).
+The Compose API was rebuilt. Phase 1 still
+has 1-2 planned local deployment wrap-up sessions (023-024); GUI, LAN verification,
+and cross-file joins remain separate later work.
+
+Separate close records:
+
+- [020: queries and saved tables](docs/sessions/020-query-and-saved-tables.md):
+  migration 004, restricted query execution, persistent tables, and the guided
+  upload/process/query/compare/save/re-query demo. Test milestone: 140 passed.
+- [021: stored-file downloads](docs/sessions/021-stored-file-downloads.md):
+  original CSV and processing/saved-table Parquet downloads; the user verified the
+  downloaded summary locally. Test milestones: 149, then 176 passed.
+- [022: CSV query-result export](docs/sessions/022-csv-query-export.md):
+  full bounded exports from processing runs and saved tables. Final suite:
+  200 passed, including a post-formatting run at close.
+
+The demo's new sample had four customers totaling 650; the prior Session 13 sample
+had three totaling 415.75. The user saved and re-queried the new summary, then
+downloaded it as Parquet. CSV exports were also independently parsed and checked.
+These are synthetic sample comparisons, not a cross-file SQL join or business trend.
+
+At session close, the user authorized the assistant to commit and push the combined
+018-022 work to origin/main. Generated artifacts/
+downloads stay local and are ignored; the source sample CSV and verification script
+are included with the code and separate session records in the publication scope.
+
+Session 019 completed the local Kubernetes exercises on Docker Desktop kind
+v1.36.1. The user verified API health through localhost:8090 port-forwarding,
+automatic Pod replacement, and database connectivity using a Secret. PostgreSQL
+remains in Compose. A PVC exercise proved file survival across Pod recreation;
+the practice Pod, claim, and backing volume were then deleted.
+
+The API Deployment, Service, and platform-db Secret were retained. Browser access
+requires a running port-forward. Full processing dependencies are not configured
+in this Kubernetes lab. ConfigMaps were explained but not exercised. The Compose
+worker is now running and processed the Session 020 smoke-test upload. The
+Kubernetes and Terraform lab images were not refreshed in Session 020.
+
+Next: local deployment wrap-up in Session 023 (024 if needed).
+This user-requested order supersedes the earlier deployment-first target.
+Phase 1 has not been declared complete.
+See [Kubernetes exercises](kubernetes/README.md),
+[Session 019](docs/sessions/019-local-kubernetes.md), and
+[Terraform exercises](Terraform/README.md).
+
+## Requested backend workflow: Sessions 020-022
+
+Session 019 clarified the desired simulation: a second computer on the same LAN
+uploads a CSV, queries a table derived from it, and downloads query results as
+CSV. Session 020 added dataset SQL queries and persistent derived tables.
+Session 021 added stored-file downloads and Session 022 added CSV result downloads.
+LAN verification and a custom GUI remain pending.
+
+On 2026-09-11, the user replaced the provisional 3-5-session estimate with
+**three backend sessions, one per feature, before the remaining deployment work**.
+The corrected numbering is 020, 021, and 022 because Session 019 already completed
+the Kubernetes exercises. Sessions 020-022 are implemented and verified.
+
+| Session | Feature and planned outcome |
+|--------------------|-----------------------------|
+| 020 | Verified bounded SQL previews, saving results as named Parquet tables, catalog lookup/listing, and querying/deriving saved tables. |
+| 021 | Verified downloads of original uploaded CSV, processing-output Parquet, and saved-table Parquet. |
+| 022 | Verified CSV query-result downloads, reusing restricted execution and full-result export limits. |
+
+Use a hybrid learning workflow for these three sessions: the assistant explains
+and performs one small task, the user observes and reviews, and both pause before
+moving to the next task. This records the chosen mode; implementation starts only
+when the user proceeds with that task. Session-start preparation remains
+explanation-only apart from explicitly requested documentation edits.
+
+The scope assumes small files, one selected dataset per query, bounded query
+execution/results, and initial verification through /docs or an HTTP client.
+The GUI comes later. LAN access remains pending and must be scoped separately;
+multi-user access, cross-dataset joins, and saved query history are deferred.
+
+After Session 022, **1-2 local deployment wrap-up sessions remain (023-024)**,
+targeting completion of the expanded local Phase 1 milestone in
+023 or 024. This is a planning estimate, not a claim that Phase 1 is complete or
+a guarantee of the finishing date. The GUI and other deferred work follow later.
+
+## Recent activity (2026-09-09 through 2026-09-11, Session 019)
+
+- Prepared a local kind cluster and imported the Terraform lab image into its node.
+- Verified API health, replacement Pods, Secret-based database access, and storage.
+- Deleted practice storage after verifying persistence; retained API resources.
+- Recorded reproduction guidance and future query/CSV/LAN requirements.
+- No application behavior changes, pytest run, commit, or push at session close.
 
 ## Queued-run preparation
 
@@ -214,6 +303,15 @@ The application exposes these custom metrics:
 - `platform_processed_rows_total` counts rows from successful runs.
 - `platform_last_successful_processing_timestamp_seconds` records the most
   recent successful completion time.
+
+## Recent activity (2026-09-09, Session 018)
+
+- Agreed a local learning simulation with no cloud budget.
+- Practised Terraform initialization, planning, creation, replacement, and cleanup.
+- Built/deployed our API through Terraform and verified PostgreSQL connectivity.
+- Added seven source-hash triggers; verified change detection and return to no changes.
+- Added Git exclusions and reproduction guidance; no commit/push or new pytest run.
+- See [Session 018](docs/sessions/018-local-terraform.md) for the full record.
 
 ## Recent activity (2026-09-09, Session 017)
 

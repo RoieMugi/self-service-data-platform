@@ -5,3 +5,14 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Terraform local providers and state
+**/.terraform/
+*.tfstate
+*.tfstate.*
+
+# Terraform saved plans (use this extension when saving plans)
+*.tfplan
+
+# Generated local download/export verification copies
+/artifacts/
