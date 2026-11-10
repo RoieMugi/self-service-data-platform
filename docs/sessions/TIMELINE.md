@@ -2,9 +2,16 @@
 
 ## Progress Overview
 
+**Latest, Session 023 (2026-11-10):** reviewed deployment ownership and CI;
+the user replaced the Terraform API image/container, verified API/database health,
+and confirmed a no-change plan. Existing CI was reported green; no new pytest run.
+One planned closure session remains (024). Replication and PostgreSQL/MinIO backup
+and restore practice were added to future scope. Phase 1 is not yet complete.
+See [Session 023](023-deployment-wrap-up.md).
+
 All sessions are recorded in `docs/sessions/`. This timeline tracks what was built, when, and why.
 
-**Latest, Sessions 021-022 (2026-09-14):** stored-file downloads and CSV query-result
+**Sessions 021-022 (2026-09-14):** stored-file downloads and CSV query-result
 exports are implemented and live-verified; 200 tests pass. The backend feature
 extension is complete. Next: local deployment wrap-up in 023-024 if needed.
 See [021](021-stored-file-downloads.md) and [022](022-csv-query-export.md).
@@ -546,7 +553,7 @@ docs/sessions/       Session history
 - Worker metrics scraped by Prometheus; final dashboard visual check pending
 
 **What's next:**
-- Sessions 020-022 complete; next local deployment wrap-up in 023-024 if needed
+- Session 023 complete; final local deployment closure review remains in Session 024
 - Local Terraform and Kubernetes API labs verified; Compose still owns the database
 - Original local milestone target: 019-021; final wrap-up to review after 019
 - Queries and saved tables verified; LAN and GUI remain future work
@@ -574,4 +581,4 @@ docs/sessions/       Session history
 
 ---
 
-**Last updated:** 2026-09-14 (Sessions 020-022 closed separately)
+**Last updated:** 2026-11-10 (Session 023 deployment wrap-up)

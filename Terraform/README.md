@@ -61,6 +61,12 @@ and verification evidence.
 
 ## Kubernetes follow-up
 
+Session 023 (2026-11-10) refreshed the Terraform API lab after the backend changes.
+The user verified a two-resource replacement, API health, database connectivity,
+and a subsequent no-change plan. The API and Compose database were retained.
+This did not refresh the Kubernetes node's imported image or configure full
+processing dependencies. See [Session 023](../docs/sessions/023-deployment-wrap-up.md).
+
 Session 019 reused data-platform-api:terraform-lab in a separate Kubernetes lab.
 The image was exported and imported into the kind node; Terraform does not manage
 that copy or the Kubernetes resources. Compose still owns PostgreSQL. See

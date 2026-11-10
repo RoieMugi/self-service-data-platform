@@ -40,8 +40,13 @@ These records are part of the project, not temporary notes.
 | [020](020-query-and-saved-tables.md) | 2026-09-11 to 2026-09-14 | Dataset queries, saved tables, and guided comparison demo | Complete |
 | [021](021-stored-file-downloads.md) | 2026-09-14 | Original CSV, processing-output and saved-table downloads | Complete |
 | [022](022-csv-query-export.md) | 2026-09-14 | Full bounded CSV query-result exports | Complete; backend feature extension finished |
+| [023](023-deployment-wrap-up.md) | 2026-11-10 | Terraform API recreation, deployment ownership, and CI review | Complete; final Phase 1 closure review remains |
 
 ## Quick Links
+
+Latest: [Session 023 - Local deployment wrap-up](023-deployment-wrap-up.md)
+(2026-11-10): Terraform replacement and convergence verified; CI reviewed.
+Final Phase 1 closure review remains Session 024.
 
 - **[Learning Timeline](TIMELINE.md)** - Overview of all sessions and progress
 - **[Project README](../../README.md)** - Architecture and checkpoints

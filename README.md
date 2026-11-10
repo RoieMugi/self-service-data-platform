@@ -89,7 +89,8 @@ affect this estimate. Recovery and final Grafana visuals remain deferred.
 | 020 | Implemented and verified dataset queries and persistent saved query tables. |
 | 021 | Implemented and verified original CSV, processing-output Parquet, and saved-table Parquet downloads. |
 | 022 | Implemented and verified full bounded query-result CSV exports from runs and saved tables. |
-| 023-024, if needed | Complete remaining local deployment review, automation practice, recreation verification, and cleanup. |
+| 023 | Verified Terraform API replacement, health/database connectivity, convergence, and reviewed CI responsibilities. |
+| 024 | Final closure review: reproduction prerequisites, retained resources, and deliberate cleanup decisions. |
 
 The queue-and-worker milestone targets three sessions including Session 015;
 two were considered possible if integration went smoothly. Learn related deployment
@@ -115,12 +116,19 @@ does not authorize implementing future tasks automatically.
 
 ## Current status
 
+**Session 023 completed on 2026-11-10.** The user rebuilt the Terraform API lab,
+confirmed both health endpoints, and confirmed a subsequent no-change plan.
+The existing GitHub Actions run was reported green; its commit and test count
+were not confirmed. No new pytest run was performed in this session.
+One planned closure session remains (024); Phase 1 is not yet declared complete.
+See [Session 023](docs/sessions/023-deployment-wrap-up.md).
+
 **The three-session backend feature extension (020-022) is complete.** The platform
 supports query previews, persistent derived tables, stored-file downloads, and CSV
 query-result exports. Session 022 passed 200 automated tests and live CSV exports
 from the user's four-customer demo and saved summary. See [the query guide](docs/query-tables.md).
-The Compose API was rebuilt. Phase 1 still
-has 1-2 planned local deployment wrap-up sessions (023-024); GUI, LAN verification,
+The Compose API was rebuilt in Session 022. Phase 1 now
+has one planned closure session (024); GUI, LAN verification,
 and cross-file joins remain separate later work.
 
 Separate close records:
@@ -157,7 +165,7 @@ in this Kubernetes lab. ConfigMaps were explained but not exercised. The Compose
 worker is now running and processed the Session 020 smoke-test upload. The
 Kubernetes and Terraform lab images were not refreshed in Session 020.
 
-Next: local deployment wrap-up in Session 023 (024 if needed).
+Next: final local deployment closure review in Session 024.
 This user-requested order supersedes the earlier deployment-first target.
 Phase 1 has not been declared complete.
 See [Kubernetes exercises](kubernetes/README.md),
@@ -194,10 +202,22 @@ execution/results, and initial verification through /docs or an HTTP client.
 The GUI comes later. LAN access remains pending and must be scoped separately;
 multi-user access, cross-dataset joins, and saved query history are deferred.
 
-After Session 022, **1-2 local deployment wrap-up sessions remain (023-024)**,
-targeting completion of the expanded local Phase 1 milestone in
-023 or 024. This is a planning estimate, not a claim that Phase 1 is complete or
-a guarantee of the finishing date. The GUI and other deferred work follow later.
+After Session 023, **one planned closure session remains (024)** for the expanded
+local Phase 1 milestone. Review reproduction prerequisites and retained resources,
+then agree any cleanup and the completion decision. This is a planning estimate,
+not a claim that Phase 1 is complete. The GUI and other deferred work follow later.
+
+## Future replication and backup work
+
+Requested in Session 023; planned for later, not implemented:
+
+- Study service/data replication for availability and its failure boundaries.
+- Plan PostgreSQL metadata and MinIO object backups, retention, and storage location.
+- Practise restoring both stores together and verify that saved-table metadata
+  resolves to readable files and correct query results.
+- Distinguish replication from historical backups: accidental deletion or
+  corruption can propagate to replicas. Infrastructure recreation alone does
+  not restore data. Scope and session estimates will be agreed separately.
 
 ## Recent activity (2026-09-09 through 2026-09-11, Session 019)
 
