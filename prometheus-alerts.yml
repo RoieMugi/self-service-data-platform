@@ -1,7 +1,9 @@
+# These rules expose alert state; no external notification delivery is configured.
 groups:
   - name: data-platform
     rules:
       - alert: PlatformProcessingInfrastructureFailure
+        # Invalid input is a user-data outcome, excluded from infrastructure alerts.
         expr: |
           sum(
             increase(

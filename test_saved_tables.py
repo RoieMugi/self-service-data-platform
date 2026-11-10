@@ -27,6 +27,7 @@ def saved_dependencies(monkeypatch):
     monkeypatch.setattr(main, "execute_saved_query", execute)
     monkeypatch.setattr(main, "upload_curated_object", upload)
     monkeypatch.setattr(main, "get_minio_client", lambda: storage)
+    # In-memory catalog for route behavior; it does not simulate database commits.
     rows = {}
 
     def insert(table_id, request, key, count, size, run_id, source_table_id):

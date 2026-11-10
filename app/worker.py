@@ -27,6 +27,8 @@ def handle_processing_message(channel, method, properties, body):
     try:
         run_id, correlation_id = decode_processing_message(body)
     except (ValueError, KeyError, TypeError, AttributeError):
+        # Retrying cannot repair the payload. No dead-letter queue is configured,
+        # so rejecting without requeue discards this message.
         logger.exception("Rejecting malformed processing message")
         channel.basic_reject(
             delivery_tag=method.delivery_tag,
@@ -40,6 +42,8 @@ def handle_processing_message(channel, method, properties, body):
             correlation_id=correlation_id,
         )
     except ProcessingError:
+        # An exception alone does not prove the failure was saved. Acknowledge
+        # only a terminal database outcome, including already-completed duplicates.
         stored_run = get_processing_run(run_id)
 
         if stored_run is not None and stored_run["status"] in ("succeeded", "failed"):
@@ -54,6 +58,7 @@ def handle_processing_message(channel, method, properties, body):
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
 
+        # Stop consumption with delivery unsettled when durable state is uncertain.
         raise
     except Exception:
         logger.exception(
@@ -77,6 +82,7 @@ def main():
         queue_name = os.environ["RABBITMQ_QUEUE"]
 
         channel.queue_declare(queue=queue_name, durable=True)
+        # One outstanding delivery bounds work held by this synchronous consumer.
         channel.basic_qos(prefetch_count=1)
 
         channel.basic_consume(

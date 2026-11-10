@@ -8,6 +8,7 @@ on:
     branches:
       - main
 
+# Tests stub external services; this workflow does not deploy or check live health.
 jobs:
   test:
     runs-on: ubuntu-latest

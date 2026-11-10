@@ -3,6 +3,7 @@ kind: Service
 metadata:
   name: platform-api
 spec:
+  # Internal cluster access; the local exercise uses kubectl port-forward.
   type: ClusterIP
   selector:
     app: platform-api

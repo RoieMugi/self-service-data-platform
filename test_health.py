@@ -1,3 +1,6 @@
+# API and processing contracts: database/storage calls are mocked; conversion uses
+# real DuckDB. These checks do not replace live dependency and recovery exercises.
+
 import json
 import logging
 from datetime import datetime, timezone

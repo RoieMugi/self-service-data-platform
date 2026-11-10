@@ -1,4 +1,7 @@
-"""Bounded previews over one Parquet artifact; no storage or HTTP dependencies."""
+"""Bounded previews and exports over one Parquet artifact.
+
+No object-storage or HTTP dependencies.
+"""
 
 import json
 from pathlib import Path
@@ -64,6 +67,8 @@ def _execute(
             encoding="utf-8",
         )
         try:
+            # A child process lets the parent enforce a deadline on engine work.
+            # The -I flag isolates Python's import setup; it is not an OS sandbox.
             completed = subprocess.run(
                 [sys.executable, "-I", str(Path(__file__).resolve()), str(work)],
                 stdin=subprocess.DEVNULL,
@@ -126,6 +131,8 @@ def _run_preview(work: Path) -> dict:
             names = relation.columns
             if len({name.lower() for name in names}) != len(names):
                 raise QueryError("Export columns must have unique names; use SQL aliases.")
+            # Probe one extra row so exports reject overflow instead of silently
+            # persisting a truncated result as though it were complete.
             relation.limit(MAX_SAVED_ROWS + 1).create("saved_result")
             row_count = connection.execute("SELECT COUNT(*) FROM saved_result").fetchone()[0]
             if row_count > MAX_SAVED_ROWS:
@@ -134,12 +141,14 @@ def _run_preview(work: Path) -> dict:
                 connection.table("saved_result").write_csv(str(artifact), header=True)
             else:
                 connection.table("saved_result").write_parquet(str(artifact))
+            # Post-write acceptance check, not a filesystem quota during execution.
             if artifact.stat().st_size > MAX_PARQUET_BYTES:
                 raise QueryError("Export exceeds the 20 MiB limit.")
             return {"row_count": row_count}
 
         cursor = connection.execute(statements[0])
         columns = [column[0] for column in cursor.description]
+        # The extra row signals truncation without issuing a separate COUNT query.
         rows = cursor.fetchmany(request["max_rows"] + 1)
         truncated = len(rows) > request["max_rows"]
         rows = rows[:request["max_rows"]]

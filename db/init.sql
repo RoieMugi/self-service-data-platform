@@ -1,3 +1,4 @@
+-- Fresh-volume schema; this file does not upgrade an existing Compose database.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS datasets (
@@ -8,6 +9,7 @@ CREATE TABLE IF NOT EXISTS datasets (
 );
 
 
+-- Metadata references MinIO objects; CSV/Parquet bytes are not stored in these rows.
 CREATE TABLE IF NOT EXISTS uploads (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     dataset_id UUID NOT NULL REFERENCES datasets(id),
@@ -39,6 +41,8 @@ CREATE TABLE IF NOT EXISTS processing_runs (
             OR validation_status IN ('passed', 'failed')
         ),
 
+    -- Enforce valid row shapes for every writer. Conditional application UPDATEs
+    -- separately control transitions; this constraint does not inspect prior state.
     CONSTRAINT processing_runs_state_check
         CHECK (
             (
@@ -101,5 +105,6 @@ CREATE TABLE IF NOT EXISTS saved_tables (
     row_count BIGINT NOT NULL CHECK (row_count BETWEEN 0 AND 100000),
     size_bytes BIGINT NOT NULL CHECK (size_bytes BETWEEN 1 AND 20971520),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Exactly one parent preserves provenance from a run or another saved table.
     CHECK ((source_run_id IS NOT NULL) <> (source_table_id IS NOT NULL))
 );

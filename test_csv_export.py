@@ -24,6 +24,7 @@ def parquet(tmp_path):
 
 
 def parse(content):
+    # An independent CSV reader checks DuckDB's output, including quoting/newlines.
     return list(csv.reader(StringIO(content.decode("utf-8"), newline="")))
 
 

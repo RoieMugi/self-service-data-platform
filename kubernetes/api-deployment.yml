@@ -1,3 +1,4 @@
+# API-only lab: the database remains in Compose; full processing is not configured.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,11 +16,13 @@ spec:
       containers:
         - name: api
           image: data-platform-api:terraform-lab
+          # Import the image into the node first; Kubernetes does not build it.
           imagePullPolicy: Never
           env:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
+                  # Created separately; applying this manifest does not create credentials.
                   name: platform-db
                   key: DATABASE_URL
           ports:

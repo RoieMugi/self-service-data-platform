@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS saved_tables (
     row_count BIGINT NOT NULL CHECK (row_count BETWEEN 0 AND 100000),
     size_bytes BIGINT NOT NULL CHECK (size_bytes BETWEEN 1 AND 20971520),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Exactly one parent preserves provenance from a run or another saved table.
     CHECK ((source_run_id IS NOT NULL) <> (source_table_id IS NOT NULL))
 );
 

@@ -5,6 +5,7 @@ metadata:
 spec:
   storageClassName: standard
   accessModes:
+    # A writable mount on one node; this does not limit access to a single Pod.
     - ReadWriteOnce
   resources:
     requests:

@@ -1,3 +1,6 @@
+# HTTP endpoints and shared processing used by app.worker.
+# PostgreSQL owns metadata and run state; MinIO holds the CSV and Parquet bytes.
+
 import json
 import logging
 import os
@@ -127,7 +130,7 @@ def log_processing_event(
     )
 
 
-# Read the DATABASE_URL from environment
+# Deployment environments supply service addresses; defaults are local study values.
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/dbname")
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "platform_minio")
@@ -136,7 +139,7 @@ MINIO_RAW_BUCKET = os.getenv("MINIO_RAW_BUCKET", "raw")
 MINIO_CURATED_BUCKET = os.getenv("MINIO_CURATED_BUCKET", "curated")
 MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
 
-# Max size for files- for this project I placed limitations
+# Uploads are buffered in memory, so reject files beyond the local demo's budget.
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 
 app = FastAPI()
@@ -196,6 +199,8 @@ async def add_correlation_id(
     return response
 
 
+# Keep identifiers in logs, not metric labels, to bound time-series cardinality.
+# These metrics are process-local; PostgreSQL retains durable run history.
 PROCESSING_RUNS = Counter(
     "platform_processing_runs_total",
     "Total number of completed processing runs.",
@@ -325,6 +330,7 @@ def health_check():
     Health check endpoint.
     Returns 200 OK if the service is running.
     """
+    # Process health only: database connectivity has a separate endpoint.
     return {"status": "healthy"}
 
 
@@ -599,6 +605,8 @@ def create_processing_run(upload_id: UUID):
 
 def claim_processing_run(run_id: UUID):
     """Start a run only if it is still queued."""
+    # One conditional UPDATE avoids a read-then-write race between consumers.
+    # Only the caller receiving a row from RETURNING may execute this run.
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
             cursor.execute(
@@ -737,6 +745,7 @@ def read_and_validate_csv(file: UploadFile):
     """
     Validate the uploaded file and return its name, content type, and bytes.
     """
+    # Admission checks only; the worker parses the CSV and validates data rows.
     filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
 
     if not filename.lower().endswith(".csv"):
@@ -849,6 +858,9 @@ def upload_dataset_file(
     except Exception:
         logger.exception("Upload metadata insert failed")
 
+        # Best-effort compensation across two stores, not an atomic rollback.
+        # This path cannot distinguish a rejected insert from a lost commit reply;
+        # cleanup can leave a dangling row if the database actually committed.
         try:
             minio_client.remove_object(MINIO_RAW_BUCKET, object_key)
         except Exception:
@@ -880,6 +892,7 @@ def record_processing_metrics(
 
 
 class ProcessingError(Exception):
+    # Shared execution reports domain outcomes; the API maps them to HTTP status.
     def __init__(self, outcome: str, message: str):
         super().__init__(message)
         self.outcome = outcome
@@ -960,12 +973,16 @@ def submit_processing(
             message="Processing run creation failed.",
         )
 
+    # The database commit and broker publish are separate operations. Without an
+    # outbox, a failure between them can leave a queued row with no message.
     try:
         publish_processing_run(
             run_id=processing_run["id"],
             correlation_id=correlation_id,
         )
     except Exception:
+        # A missing confirmation does not prove delivery failed. Preserve the run
+        # and return its ID so the caller can inspect state before resubmitting.
         logger.exception(
             "Processing run publication failed",
             extra={
@@ -1006,6 +1023,8 @@ def execute_processing(
             message="Processing run claim failed.",
         )
 
+    # Terminal duplicates need no work. A running row is not reclaimed here:
+    # there is no lease or automatic recovery for an interrupted execution.
     if claimed_run is None:
         existing_run = get_processing_run(run_id)
 
@@ -1162,6 +1181,7 @@ def execute_processing(
             message="The uploaded CSV could not be processed.",
         )
 
+    # Separate runs for the same upload share this output path.
     curated_object_key = (
         f'{upload["dataset_id"]}/'
         f'{upload["id"]}/'
@@ -1200,6 +1220,8 @@ def execute_processing(
             message="Curated object storage is unavailable.",
         )
 
+    # Record success only after storing the artifact. If this update fails, the
+    # object may exist without a confirmed terminal run; the worker rereads state.
     try:
         completed_run = complete_processing_run(
             run_id=run_id,
@@ -1274,6 +1296,7 @@ def db_health_check():
     Database health check endpoint.
     Returns 200 if connected, 500 if the database is unreachable.
     """
+    # Connectivity check only; it does not verify schema or other dependencies.
     try:
         conn = get_db_connection()
         conn.close()
@@ -1340,6 +1363,7 @@ def query_processing_run(run_id: UUID, query: QueryRequest):
 
 
 def processing_artifact_key(run_id: UUID) -> str:
+    # Resolve file locations from metadata rather than caller-supplied paths.
     processing_run = read_processing_run(run_id)
     if processing_run["status"] != "succeeded":
         raise HTTPException(
@@ -1564,6 +1588,7 @@ def save_query_table(
     source_run_id: UUID | None = None,
     source_table_id: UUID | None = None,
 ):
+    # Persist a standalone Parquet snapshot; later reads do not rerun query_sql.
     content = load_query_artifact(object_key)
     try:
         parquet, row_count = execute_saved_query(content, request.sql)

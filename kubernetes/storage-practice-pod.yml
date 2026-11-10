@@ -1,3 +1,4 @@
+# Standalone practice Pod: recreation reuses the claim, but no Deployment replaces it.
 apiVersion: v1
 kind: Pod
 metadata:

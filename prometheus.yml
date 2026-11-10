@@ -5,6 +5,7 @@ global:
 rule_files:
   - /etc/prometheus/prometheus-alerts.yml
 
+# API and worker have separate process-local registries; scrape both for outcomes.
 scrape_configs:
   - job_name: data-platform-api
     metrics_path: /metrics

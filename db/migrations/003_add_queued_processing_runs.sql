@@ -1,8 +1,10 @@
+-- One-time upgrade from the earlier running-first schema; do not reapply.
 BEGIN;
 
 ALTER TABLE processing_runs
     ADD COLUMN created_at TIMESTAMPTZ;
 
+-- Historical runs started immediately, so started_at is the available submission time.
 UPDATE processing_runs
 SET created_at = started_at;
 
@@ -10,6 +12,7 @@ ALTER TABLE processing_runs
     ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP,
     ALTER COLUMN created_at SET NOT NULL;
 
+-- Queued runs have a submission time but no execution start time yet.
 ALTER TABLE processing_runs
     ALTER COLUMN started_at DROP NOT NULL,
     ALTER COLUMN started_at DROP DEFAULT;

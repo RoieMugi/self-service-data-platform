@@ -1,3 +1,4 @@
+# Independent lifecycle exercise with its own state; shares port 8089 with api-lab.
 terraform {
   required_providers {
     docker = {

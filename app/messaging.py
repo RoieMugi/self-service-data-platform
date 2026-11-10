@@ -21,8 +21,11 @@ def publish_processing_run(run_id: UUID, correlation_id: str):
     try:
         channel = connection.channel()
         channel.queue_declare(queue=queue_name, durable=True)
+        # Confirms report broker acceptance, not completion by the worker.
+        # Queue durability and persistent messages support broker restart survival.
         channel.confirm_delivery()
 
+        # Pass identity, not file contents or a stale copy of mutable run state.
         message = {
             "run_id": str(run_id),
             "correlation_id": correlation_id,
@@ -36,8 +39,10 @@ def publish_processing_run(run_id: UUID, correlation_id: str):
                 content_type="application/json",
                 delivery_mode=2,
                 correlation_id=correlation_id,
+                # Diagnostic identity only; PostgreSQL's claim controls duplicates.
                 message_id=str(run_id),
             ),
+            # Treat an unroutable message as a submission failure, not silent loss.
             mandatory=True,
         )
     finally:

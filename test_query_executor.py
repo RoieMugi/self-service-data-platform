@@ -10,6 +10,7 @@ from app.query_executor import execute_saved_query
 
 @pytest.fixture
 def parquet_content(tmp_path):
+    # Real Parquet and child execution exercise engine restrictions beyond mocks.
     path = tmp_path / "source.parquet"
     with duckdb.connect() as connection:
         connection.execute("CREATE TABLE sales AS SELECT * FROM (VALUES ('north', 10), ('north', 20), ('south', 5)) t(region, amount)")
@@ -52,6 +53,7 @@ def test_rejects_oversized_response(parquet_content):
 
 
 def test_timeout_is_a_controlled_error(parquet_content, monkeypatch):
+    # Deterministically test error translation; this does not measure real deadlines.
     def expire(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
 

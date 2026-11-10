@@ -1,3 +1,4 @@
+# API-only learning lab. Compose owns the database and network used below.
 terraform {
   required_providers {
     docker = {
@@ -18,6 +19,8 @@ resource "docker_image" "api" {
     context = abspath("${path.module}/../..")
   }
 
+  # Reevaluate hashes during plan/apply; source edits are not deployed automatically.
+  # Add new application files here when they become part of the image's inputs.
   triggers = {
     dockerfile     = filesha256("${path.module}/../../Dockerfile")
     requirements   = filesha256("${path.module}/../../requirements.txt")
