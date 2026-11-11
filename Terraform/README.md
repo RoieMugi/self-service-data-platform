@@ -18,16 +18,25 @@ systems or Docker endpoints require adapting the provider host.
 
 Prerequisites: Docker Desktop Linux engine running, Terraform available, and the
 repository cloned. The existing Compose database must be healthy on network
-data-platform-engineering_default, with the lab credentials in docker-compose.yml.
-If the Compose environment is absent, prepare it separately from the project root
-with `docker compose up -d db`; verify the actual network name and adapt the lab
-configuration if the Compose project name differs. Terraform does not create this
-database or network. Existing local databases must not have migration 003 reapplied.
+data-platform-engineering_default, with the lab credentials from `.env`.
+If the Compose environment is absent, copy `.env.example` to `.env` at the project
+root, then prepare it with `docker compose up -d db`; verify the actual network name
+and adapt the lab configuration if the Compose project name differs. Terraform does
+not create this database or network. Existing local databases must not have
+migration 003 reapplied.
+
+Set `TF_VAR_database_url` from your local `.env` values before `terraform plan`
+or `terraform apply`. Its host is `db` because this lab joins the Compose network;
+the loopback-only host port does not affect container-to-container traffic.
+Use URL-safe credentials, as in the demo template. Do not commit a populated
+`.tfvars` file. Terraform state and Docker container metadata can still contain
+the connection string, even though the variable is marked sensitive.
 
 From the repository root:
 
 ```powershell
 cd .\Terraform\api-lab
+$env:TF_VAR_database_url = 'postgresql://<user>:<password>@db:5432/<database>'
 terraform init
 terraform plan
 terraform apply
@@ -46,7 +55,7 @@ Extend that explicit list when adding application files. This is not a file watc
 
 Commit main.tf and .terraform.lock.hcl from each lab. Ignore .terraform/, *.tfstate,
 *.tfstate.*, and saved plans named *.tfplan. State can contain credentials; the
-configuration also explicitly includes local study credentials.
+configuration now reads the local database URL from a sensitive input variable.
 
 Each directory has independent local state. Preserve it while managing its existing
 resources; a fresh clone does not automatically adopt containers from another state.

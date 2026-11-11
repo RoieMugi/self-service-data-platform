@@ -130,11 +130,11 @@ def log_processing_event(
     )
 
 
-# Deployment environments supply service addresses; defaults are local study values.
+# Deployment environments supply credentials; address defaults support local study.
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost:5432/dbname")
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "platform_minio")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "platform_minio_password")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
 MINIO_RAW_BUCKET = os.getenv("MINIO_RAW_BUCKET", "raw")
 MINIO_CURATED_BUCKET = os.getenv("MINIO_CURATED_BUCKET", "curated")
 MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"

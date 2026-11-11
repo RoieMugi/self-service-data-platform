@@ -12,6 +12,12 @@ provider "docker" {
   host = "npipe:////./pipe/dockerDesktopLinuxEngine"
 }
 
+variable "database_url" {
+  description = "Connection to the local Compose database; provide through TF_VAR_database_url."
+  type        = string
+  sensitive   = true
+}
+
 resource "docker_image" "api" {
   name = "data-platform-api:terraform-lab"
 
@@ -38,7 +44,7 @@ resource "docker_container" "api" {
   image = docker_image.api.image_id
 
   env = [
-    "DATABASE_URL=postgresql://platform_user:platform_pass@db:5432/platform_db"
+    "DATABASE_URL=${var.database_url}"
   ]
 
   networks_advanced {

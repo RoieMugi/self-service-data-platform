@@ -1,18 +1,23 @@
 # Local Kubernetes exercises
 
 Session 019 used Docker Desktop kind, one node, Kubernetes v1.36.1 on Windows.
-The API connects to the existing Compose PostgreSQL; this is not a deployment
-of the full processing platform. Commands below are reproduction instructions,
-not an instruction to rerun cleanup or create resources automatically.
+The API connected to the existing Compose PostgreSQL; this is not a deployment
+of the full processing platform. **The database connectivity steps below are a
+historical record, not a working quick start with the current Compose defaults.**
+Compose now publishes PostgreSQL only on `127.0.0.1`, so a Pod reaching
+`host.docker.internal:5432` cannot use that host port. Reproduction needs a
+deliberately designed database route or a separate database inside the cluster.
+Do not change the default Compose binding to all interfaces just for this lab.
 
 ## Prerequisites and ownership
 
 - Docker Desktop Kubernetes running; verify `kubectl config current-context`
   reports `docker-desktop` and `kubectl get nodes` reports Ready.
 - Local image `data-platform-api:terraform-lab` from [the Terraform lab](../Terraform/README.md).
-- Compose PostgreSQL running, with port 5432 published and existing lab credentials.
-  Kubernetes does not own that database or its volume. Do not reapply migration 003
-  to the previously upgraded database.
+- Compose PostgreSQL running with the local demo credentials, plus a database
+  route reachable from the Pod. The current loopback-only host port is not such a
+  route. Kubernetes does not own that database or its volume. Do not reapply
+  migration 003 to the previously upgraded database.
 - Run the commands from the repository root in PowerShell.
 - The API Deployment and Service plus platform-db Secret were retained at close.
   The storage practice Pod, PVC, and backing PV were deleted.
@@ -40,18 +45,22 @@ Temporary archives remain unless cleaned up separately.
 
 ## Database Secret and API
 
-Verify network access from an existing API Pod, if one is already running:
+The following check and Secret command document the route used in Session 019.
+They will fail with the current Compose defaults. Establish and verify an
+intentional database route first, then replace `host.docker.internal` in both
+commands with its actual host and load credentials from your local `.env`.
+If an existing API Pod is already running, check its route:
 
 ```powershell
 kubectl exec deployment/platform-api -- python -c "import socket; s = socket.create_connection(('host.docker.internal', 5432), timeout=5); print('Database port reachable'); s.close()"
 ```
 
-Create the Secret once if absent, using the existing local study credentials.
-This command contains a password and can be retained in terminal history. The
+Create the Secret once if absent, using disposable local study credentials.
+The example command contains a password and can be retained in terminal history. The
 Deployment references the Secret; its YAML alone does not recreate credentials.
 
 ```powershell
-kubectl create secret generic platform-db --from-literal=DATABASE_URL='postgresql://platform_user:platform_pass@host.docker.internal:5432/platform_db'
+kubectl create secret generic platform-db --from-literal=DATABASE_URL='postgresql://<user>:<password>@<reachable-db-host>:5432/<database>'
 kubectl apply -f .\kubernetes\api-deployment.yml
 kubectl apply -f .\kubernetes\api-service.yml
 kubectl rollout status deployment/platform-api --timeout=60s

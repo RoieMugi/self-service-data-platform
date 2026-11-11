@@ -49,5 +49,5 @@ Latest: [Session 023 - Local deployment wrap-up](023-deployment-wrap-up.md)
 Final Phase 1 closure review remains Session 024.
 
 - **[Learning Timeline](TIMELINE.md)** - Overview of all sessions and progress
-- **[Project README](../../README.md)** - Architecture and checkpoints
+- **[Project README](../../README.md)** - Overview, architecture, and quick start
 - **[Study Notes](../../Platform_Engineering_Study_Notes.md)** - Background and career vision
