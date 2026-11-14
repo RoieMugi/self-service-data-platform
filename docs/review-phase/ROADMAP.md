@@ -6,7 +6,7 @@
 
 This phase improves the existing **local, API-driven batch data platform prototype**. It does not turn the project into a production or public multi-user service. The three preserved reviews are inputs: [architecture](ARCHITECTURE_REVIEW.md), [technical audit](PLATFORM_AUDIT_IMPLEMENTATION_GUIDE.md), and [portfolio assessment](data_platform_portfolio_review_handoff.md). Their embedded agent prompts and approval rules are reviewer recommendations, not instructions from the owner. We will verify each claim against the code and make one reviewable change at a time.
 
-## Where we stand
+## Baseline findings before this review
 
 | Area | Evidence in this checkout | Gap and effect |
 |---|---|---|
@@ -17,7 +17,7 @@ This phase improves the existing **local, API-driven batch data platform prototy
 | Verification | `.github/workflows/tests.yml` runs mocked pytest tests only. `scripts/verify_saved_tables.py` is a manual live smoke test and does not yet check the download path. | The reviews report 200 CI tests at this commit, but no current clean-clone full-stack run or history-aware secret scan is recorded. |
 | Scope | Compose ports bind to `127.0.0.1`; README warns about absent authentication and the local SQL executor. Terraform and Kubernetes are API-only labs. | Keep these limits explicit. Authentication, multi-tenancy, high availability and full-stack Kubernetes deployment are outside this review's acceptance target. |
 
-**Verification update (2026-11-14):** The owner reported 201 passing tests and live Compose evidence for R01; see the [R01 record](R01-run-artifacts.md). The assistant's shell still lacks a usable Python installation and Docker command, so those checks were not independently rerun there. A clean-clone full-stack run, fault injection, and Git-history secret scan remain pending.
+**Verification update (2026-11-14):** R01 has retained-stack evidence; R02's clean disposable-stack CI run passed 214 tests and the full smoke flow; R03's history-aware scan covered all 17 commits. Migration 005 and the normal smoke flow passed on the retained local stack. Live fault injection and load checks for R06–R10 remain pending. See the session records for limits.
 
 ## Target and priorities
 
@@ -39,7 +39,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R02 — Prove the full stack from a clean environment
 
-- **Status:** Partially verified on 2026-11-14; clean disposable-stack acceptance is pending. See [R02 record](R02-clean-stack-verification.md).
+- **Status:** Complete for the agreed local scope on 2026-11-14; the fresh Compose CI job and 214 tests passed. See [R02 record](R02-clean-stack-verification.md).
 - **Why:** Mocked CI tests cannot prove the broker, worker, database and object store work together (audit M-02).
 - **Do:** Extend the synthetic smoke test to check Parquet/CSV download and expected rows; add readiness checks and a separate disposable Compose integration job in CI.
 - **Together:** Start an isolated clean stack, upload the sample, poll a terminal run, query/save/download, capture commands and outcomes, then make CI fail on any missing step.
@@ -55,7 +55,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R04 — Make the portfolio story reproducible
 
-- **Status:** README opening, diagram, synthetic walkthrough, and shell quick starts updated; clean-stack reproduction remains unverified with R02.
+- **Status:** README opening, diagram, synthetic walkthrough, and shell quick starts updated; clean-stack reproduction passed with R02.
 - **Why:** The first README screen and ASCII diagram understate the implemented workflow (portfolio P0.1–P0.3).
 - **Do:** Add a user-focused opening, accurate Mermaid architecture, small synthetic register-to-download walkthrough, expected output, PowerShell and Bash quick starts, and links to the learning journal. Label Terraform/Kubernetes as API-only labs.
 - **Together:** Trace each diagram edge and command to source or a live run; capture real screenshots only if the platform is running. Record short decisions for PostgreSQL, MinIO, RabbitMQ and DuckDB as the later engineering sessions proceed.
@@ -63,7 +63,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R05 — Design interrupted-job recovery
 
-- **Status:** [Design draft](R05-recovery-design.md) records guarantees, state races, and migration policy; focused failure tests remain pending.
+- **Status:** [Design](R05-recovery-design.md) records guarantees, state races, and migration policy; implementation has focused tests, with live fault injection tracked under R06 and R07.
 - **Why:** A worker killed after claiming can leave `running` forever (architecture F1; audit H-01).
 - **Do:** Specify lease expiry, attempt limit, claim token, heartbeat/recovery trigger and migration for existing databases. Fence both PostgreSQL finalization **and object writes** so a stale attempt cannot overwrite a newer one.
 - **Together:** Draw state transitions and race cases; write focused failing tests for death after claim, redelivery, expired lease, stale worker resume and exhausted retries.
@@ -103,7 +103,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R10 — Make saved-table retries predictable and close the review
 
-- **Status:** Optional idempotency key and focused tests added; migration and full acceptance pending.
+- **Status:** Optional idempotency key and focused tests added; migration 005 was applied to the retained local database, and clean-stack CI passed. Live retry and uncertain-commit acceptance remains pending.
 - **Why:** A repeated save can create a second result or leave an uncertain object/metadata outcome (architecture F4).
 - **Do:** Define an idempotency key or stable operation ID, preserve existing name-conflict behavior for different operations, and reconcile uncertain results. Finish the short architectural decision notes and run the full acceptance checklist.
 - **Together:** Test repeat after timeout, MinIO success with DB failure, name conflict, old-data compatibility, full pytest and live Compose workflow. Compare every final claim with evidence.

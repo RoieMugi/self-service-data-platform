@@ -1,12 +1,14 @@
 # R02 - Clean-stack verification checkpoint
 
 **Date:** 2026-11-14
-**Status:** Partially verified; clean disposable-stack run pending.
+**Status:** Complete for the agreed local scope; clean disposable-stack CI run passed.
 
 The smoke script now checks the uploaded CSV bytes, processed Parquet rows, saved-table Parquet rows, and CSV export values. It waits for API/database readiness and reports POST error details. A focused Parquet-reader test and a separate disposable Compose integration job were added to CI.
 
 The owner ran `python -m pytest -q`: **202 passed, 1 existing `python_multipart` pending-deprecation warning**. Against the owner's retained local Compose stack, smoke attempts reached successful upload, processing, and Parquet download, but did not complete. One query returned HTTP 422 with `Query exceeded the 10-second execution limit.` An earlier table save returned HTTP 422 without its response body captured; another attempt saw an HTTP connection close during raw download. The API and worker remained running, and RabbitMQ later reported healthy. A later idle `docker stats --no-stream` snapshot showed the separate Kubernetes control plane using about 1 GiB and 44% CPU of a 3.64 GiB Docker allocation. This suggests possible local contention but does not establish the cause during a failed query.
 
-**Acceptance still needed:** Run the new CI integration job or an equivalent clean, isolated Compose stack; verify the full smoke flow and retained logs. Do not delete the owner's existing local volumes to obtain this evidence. R02 is not marked complete, and no clean-clone claim should be made from the current results.
+**Earlier acceptance gap:** A clean, isolated Compose run was still needed at this point. The later CI result below closed that gap without deleting the owner's local volumes.
 
 **Later retained-stack result (2026-11-14):** After migration 005 and rebuilding API, worker, and reconciler, the smoke script passed the normal upload, processing, query, save, CSV export, and download flow. See the [R06–R10 checkpoint](R06-R10-implementation.md) for IDs. This confirms the current local stack works, but it was not a clean environment and does not close R02.
+
+**Clean-stack acceptance (2026-11-14):** [GitHub Actions run 43618922391](https://github.com/RoieMugi/self-service-data-platform/actions/runs/43618922391) passed both jobs on commit `b9e99fc`: **214 pytest tests passed** (one existing `python_multipart` warning), and the integration job built a fresh disposable Compose stack, ran `scripts/verify_saved_tables.py` successfully, uploaded service logs, and removed the stack and volumes. The smoke output recorded run `95c99835-8af2-4947-b2bb-ecbe74752be6`, saved table `9a0c7c80-e9ef-40b3-a96f-b1355e52f776`, and derived table `df59706b-e9a0-4caf-9202-ad5c028aa94b`. Its assertions cover upload bytes, processing, query values, saved Parquet rows, and CSV export. The first two CI attempts exposed unavailable MinIO images on Docker Hub and Quay. The passing run uses pinned `pgsty/silo:RELEASE.2026-09-16T00-00-00Z` for S3-compatible storage and bucket setup. This CI run does not test migration of an existing MinIO volume to Silo or the live fault-injection cases in R06–R10.

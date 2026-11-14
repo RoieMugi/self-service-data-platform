@@ -37,7 +37,7 @@ PostgreSQL is the source of truth for run state. RabbitMQ carries work requests;
 
 ## Quick start
 
-Prerequisites: Docker with Compose and free local ports 5432, 8000, 9000, 9001, 9090, 3000, and 15672. Python 3.11 is needed for the optional smoke test and pytest. From the repository root in PowerShell:
+Prerequisites: Docker with Compose and free local ports 5432, 8000, 9000, 9001, 9090, 3000, and 15672. Python 3.11 is needed for the optional smoke test and pytest. Compose uses a pinned Silo image, a MinIO-compatible S3 store, because the former MinIO container repositories are unavailable for fresh pulls. From the repository root in PowerShell:
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
