@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import psycopg
+from minio import Minio
 from psycopg.rows import dict_row
 
 
@@ -105,6 +106,40 @@ def reset_outbox(db, run_id):
             )
 
 
+def install_finalization_hold(db):
+    with db.transaction():
+        with db.cursor() as cursor:
+            cursor.execute("""CREATE FUNCTION ci_hold_processing_success() RETURNS trigger AS $$
+                BEGIN PERFORM pg_sleep(20); RETURN NEW; END;
+                $$ LANGUAGE plpgsql""")
+            cursor.execute("""CREATE TRIGGER ci_hold_processing_success
+                BEFORE UPDATE OF status ON processing_runs
+                FOR EACH ROW WHEN (NEW.status = 'succeeded')
+                EXECUTE FUNCTION ci_hold_processing_success()""")
+
+
+def remove_finalization_hold(db):
+    with db.transaction():
+        with db.cursor() as cursor:
+            cursor.execute("DROP TRIGGER IF EXISTS ci_hold_processing_success ON processing_runs")
+            cursor.execute("DROP FUNCTION IF EXISTS ci_hold_processing_success()")
+
+
+def worker_in_finalization_hold(db):
+    with db.cursor() as cursor:
+        cursor.execute("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event = 'PgSleep')")
+        return cursor.fetchone()[0]
+
+
+def force_expire_running(db, run_id):
+    with db.transaction():
+        with db.cursor() as cursor:
+            cursor.execute("""UPDATE processing_runs
+                SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                WHERE id = %s AND status = 'running' RETURNING id""", (run_id,))
+            assert cursor.fetchone() is not None, "Killed worker did not leave a running row"
+
+
 def main():
     require_disposable_ci()
     settings = config()
@@ -116,6 +151,7 @@ def main():
     broker_auth = (settings["RABBITMQ_DEFAULT_USER"], settings["RABBITMQ_DEFAULT_PASS"])
     worker_running = True
     broker_running = True
+    delay_trigger_installed = False
 
     with psycopg.connect(database_url, autocommit=True) as db, httpx.Client(
         base_url="http://127.0.0.1:8000", timeout=20
@@ -160,6 +196,37 @@ def main():
             assert "/attempt-2/" in recovered["curated_object_key"], recovered
             assert recovered["claim_token"] is None
             assert old_token != recovered["claim_token"]
+
+            # R06: hold finalization inside PostgreSQL after the artifact has
+            # been uploaded, kill the actual worker, and recover the run.
+            install_finalization_hold(db)
+            delay_trigger_installed = True
+            upload_id = make_upload(client, "killed")
+            killed_id = UUID(post(client, f"/uploads/{upload_id}/process")["run_id"])
+            wait_for("worker to reach finalization hold", lambda: worker_in_finalization_hold(db))
+            compose("kill", "worker")
+            compose("stop", "worker")
+            worker_running = False
+            remove_finalization_hold(db)
+            delay_trigger_installed = False
+            interrupted = run_row(db, killed_id)
+            assert interrupted["status"] == "running" and interrupted["attempt_count"] == 1, interrupted
+            force_expire_running(db, killed_id)
+            wait_for("killed run to be requeued", lambda: run_with_status(db, killed_id, "queued"))
+            compose("start", "worker")
+            worker_running = True
+            killed = wait_for(
+                "killed run to succeed on retry",
+                lambda: run_with_status(db, killed_id, "succeeded"),
+            )
+            assert killed["attempt_count"] == 2 and "/attempt-2/" in killed["curated_object_key"], killed
+            storage = Minio(
+                "127.0.0.1:9000", access_key=settings["MINIO_ROOT_USER"],
+                secret_key=settings["MINIO_ROOT_PASSWORD"], secure=False,
+            )
+            key_prefix = killed["curated_object_key"].split("attempt-2/")[0]
+            assert list(storage.list_objects("curated", prefix=key_prefix + "attempt-1/"))
+            assert list(storage.list_objects("curated", prefix=key_prefix + "attempt-2/"))
 
             # R06: an exhausted third attempt becomes terminal instead of
             # cycling indefinitely.
@@ -218,11 +285,14 @@ def main():
             print(json.dumps({
                 "status": "passed",
                 "expired_run": str(recovered_id),
+                "killed_worker_run": str(killed_id),
                 "exhausted_run": str(exhausted_id),
                 "broker_outage_run": str(outage_id),
                 "duplicate_delivery_run": str(duplicate_id),
             }, indent=2))
         finally:
+            if delay_trigger_installed:
+                remove_finalization_hold(db)
             if not broker_running:
                 compose("start", "rabbitmq")
             if not worker_running:
