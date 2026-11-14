@@ -307,7 +307,7 @@ def test_upload_returns_400_for_empty_csv(monkeypatch):
     fake_minio_client.put_object.assert_not_called()
 
 
-def test_upload_removes_object_when_database_insert_fails(monkeypatch):
+def test_upload_preserves_object_when_database_commit_is_uncertain(monkeypatch):
     dataset_id = UUID("a81cb365-f0a3-443a-a6ea-c077949e6207")
     upload_id = UUID("cd49f308-e39e-4d87-a7f0-f72f75bde678")
     fake_minio_client = Mock()
@@ -351,14 +351,9 @@ def test_upload_removes_object_when_database_insert_fails(monkeypatch):
     object_key = f"{dataset_id}/{upload_id}/sales.csv"
 
     assert response.status_code == 500
-    assert response.json() == {
-        "detail": "Upload registration failed.",
-    }
+    assert response.json()["detail"]["upload_id"] == str(upload_id)
     fake_minio_client.put_object.assert_called_once()
-    fake_minio_client.remove_object.assert_called_once_with(
-        "raw",
-        object_key,
-    )
+    fake_minio_client.remove_object.assert_not_called()
 
 def test_upload_returns_503_when_object_storage_fails(monkeypatch):
     dataset_id = UUID("a81cb365-f0a3-443a-a6ea-c077949e6207")
@@ -498,7 +493,8 @@ def test_claim_processing_run_returns_claim_or_none(monkeypatch, available):
     assert "WHERE id = %s AND status = 'queued'" in normalized_query
     assert "status = 'running'" in normalized_query
     assert "started_at = CURRENT_TIMESTAMP" in normalized_query
-    assert parameters == (run_id,)
+    assert parameters[1] == run_id
+    assert isinstance(parameters[0], UUID)
 
 
 @pytest.mark.parametrize("claim_error", [False, True])
@@ -1430,6 +1426,7 @@ def test_complete_processing_run_updates_success_fields(
         42,
         curated_object_key,
         run_id,
+        None,
     )
 
 def test_fail_processing_run_records_validation_failure(
@@ -1480,6 +1477,7 @@ def test_fail_processing_run_records_validation_failure(
         "failed",
         error_message,
         run_id,
+        None,
     )
 
 def test_fail_processing_run_leaves_validation_unknown(
@@ -1529,6 +1527,7 @@ def test_fail_processing_run_leaves_validation_unknown(
         None,
         error_message,
         run_id,
+        None,
     )
 
 

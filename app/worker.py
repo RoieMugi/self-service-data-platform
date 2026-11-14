@@ -46,7 +46,10 @@ def handle_processing_message(channel, method, properties, body):
         # only a terminal database outcome, including already-completed duplicates.
         stored_run = get_processing_run(run_id)
 
-        if stored_run is not None and stored_run["status"] in ("succeeded", "failed"):
+        if stored_run is not None and (
+            stored_run["status"] in ("succeeded", "failed")
+            or (stored_run["status"] == "running" and stored_run.get("lease_expires_at") is not None)
+        ):
             logger.info(
                 "Acknowledging recorded terminal outcome",
                 extra={

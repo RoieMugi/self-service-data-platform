@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="680" viewBox="0 0 1400 680" role="img" aria-labelledby="title description">
+  <title id="title">Self-service batch data platform architecture</title>
+  <desc id="description">Client calls FastAPI. FastAPI records metadata in PostgreSQL, stores raw CSV in MinIO, and sends run requests to RabbitMQ. A worker reads raw CSV, uses DuckDB, writes curated Parquet to MinIO, and updates PostgreSQL. API and worker metrics are viewed through Prometheus and Grafana.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 L9 5 L1 9 Z" fill="#475569"/></marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #0f172a; }
+      .title { font-size: 27px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .section { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; fill: #64748b; }
+      .name { font-size: 19px; font-weight: 700; text-anchor: middle; }
+      .detail { font-size: 13px; fill: #475569; text-anchor: middle; }
+      .label { font-size: 12px; font-weight: 600; fill: #475569; text-anchor: middle; }
+      .line { fill: none; stroke: #475569; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .support { fill: none; stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 6 5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1400" height="680" fill="#ffffff"/>
+  <text class="title" x="52" y="56">Self-service batch data platform</text>
+  <text class="subtitle" x="52" y="84">Local prototype · request, processing, storage, and observability</text>
+  <line x1="52" y1="105" x2="1348" y2="105" stroke="#e2e8f0" stroke-width="2"/>
+  <text class="section" x="52" y="145">PROCESSING FLOW</text>
+  <g stroke-width="2">
+    <rect x="52" y="178" width="160" height="88" rx="12" fill="#eff6ff" stroke="#60a5fa"/>
+    <rect x="268" y="178" width="190" height="88" rx="12" fill="#eff6ff" stroke="#60a5fa"/>
+    <rect x="514" y="178" width="190" height="88" rx="12" fill="#f5f3ff" stroke="#a78bfa"/>
+    <rect x="760" y="178" width="190" height="88" rx="12" fill="#f5f3ff" stroke="#a78bfa"/>
+    <rect x="1006" y="178" width="190" height="88" rx="12" fill="#fdf2f8" stroke="#f9a8d4"/>
+    <rect x="268" y="371" width="190" height="94" rx="12" fill="#f0fdf4" stroke="#86efac"/>
+    <rect x="514" y="371" width="190" height="94" rx="12" fill="#fffbeb" stroke="#fcd34d"/>
+    <rect x="1006" y="371" width="190" height="94" rx="12" fill="#fffbeb" stroke="#fcd34d"/>
+    <rect x="502" y="590" width="190" height="70" rx="12" fill="#f1f5f9" stroke="#94a3b8"/>
+    <rect x="760" y="590" width="190" height="70" rx="12" fill="#f1f5f9" stroke="#94a3b8"/>
+  </g>
+  <g>
+    <text class="name" x="132" y="215">Client</text><text class="detail" x="132" y="239">HTTP request</text>
+    <text class="name" x="363" y="215">FastAPI</text><text class="detail" x="363" y="239">register · query · download</text>
+    <text class="name" x="609" y="215">RabbitMQ</text><text class="detail" x="609" y="239">run requests</text>
+    <text class="name" x="855" y="215">Worker</text><text class="detail" x="855" y="239">claim · validate · write</text>
+    <text class="name" x="1101" y="215">DuckDB</text><text class="detail" x="1101" y="239">CSV → Parquet</text>
+    <text class="name" x="363" y="409">PostgreSQL</text><text class="detail" x="363" y="435">dataset · run · table metadata</text>
+    <text class="name" x="609" y="409">MinIO · raw</text><text class="detail" x="609" y="435">original CSV</text>
+    <text class="name" x="1101" y="409">MinIO · curated</text><text class="detail" x="1101" y="435">run and table Parquet</text>
+    <text class="name" x="597" y="632">Prometheus</text><text class="name" x="855" y="632">Grafana</text>
+  </g>
+  <path class="line" d="M212 222 H268"/><path class="line" d="M458 222 H514"/>
+  <path class="line" d="M704 222 H760"/><path class="line" d="M950 222 H1006"/>
+  <text class="section" x="52" y="340">DURABLE DATA</text>
+  <path class="line" d="M363 266 V371"/><text class="label" x="421" y="320">metadata</text>
+  <path class="line" d="M458 252 H486 V397 H514"/><text class="label" x="554" y="307">upload</text>
+  <path class="line" d="M704 401 H730 V251 H760"/><text class="label" x="803" y="350">read CSV</text>
+  <path class="line" d="M1101 266 V371"/><text class="label" x="1225" y="321">write output</text>
+  <path class="support" d="M855 266 V510 H363 V465"/>
+  <text class="label" x="611" y="490">worker updates run status</text>
+  <text class="detail" x="1101" y="494">FastAPI reads curated files for queries and downloads</text>
+  <line x1="52" y1="544" x2="1348" y2="544" stroke="#e2e8f0" stroke-width="2"/>
+  <text class="section" x="52" y="579">OBSERVABILITY</text>
+  <text class="detail" x="365" y="631">API + worker metrics</text>
+  <path class="line" d="M448 625 H502"/><path class="line" d="M692 625 H760"/>
+</svg>

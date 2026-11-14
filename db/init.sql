@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS processing_runs (
     curated_object_key TEXT,
     validation_status TEXT,
     error_message TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    claim_token UUID,
+    lease_expires_at TIMESTAMPTZ,
 
     CONSTRAINT processing_runs_status_check
         CHECK (status IN ('running', 'succeeded', 'queued', 'failed')),
@@ -94,6 +97,18 @@ CREATE TABLE IF NOT EXISTS processing_runs (
 CREATE INDEX IF NOT EXISTS idx_processing_runs_upload_id
     ON processing_runs(upload_id);
 
+CREATE INDEX IF NOT EXISTS idx_processing_runs_expired_lease
+    ON processing_runs (lease_expires_at) WHERE status = 'running';
+
+CREATE TABLE IF NOT EXISTS processing_outbox (
+    run_id UUID PRIMARY KEY REFERENCES processing_runs(id),
+    correlation_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    published_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_processing_outbox_pending
+    ON processing_outbox (created_at, run_id) WHERE published_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS saved_tables (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL UNIQUE CHECK (length(btrim(name)) BETWEEN 1 AND 100),
@@ -104,7 +119,10 @@ CREATE TABLE IF NOT EXISTS saved_tables (
     object_key TEXT NOT NULL UNIQUE,
     row_count BIGINT NOT NULL CHECK (row_count BETWEEN 0 AND 100000),
     size_bytes BIGINT NOT NULL CHECK (size_bytes BETWEEN 1 AND 20971520),
+    operation_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     -- Exactly one parent preserves provenance from a run or another saved table.
     CHECK ((source_run_id IS NOT NULL) <> (source_table_id IS NOT NULL))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_tables_operation_id
+    ON saved_tables (operation_id) WHERE operation_id IS NOT NULL;

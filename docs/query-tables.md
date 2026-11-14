@@ -20,6 +20,8 @@ with the full storage/worker dependencies and was not updated in this session.
 | POST /processing-runs/{run_id}/query/csv | Export a SELECT over a successful run as CSV. |
 | POST /tables/{table_id}/query/csv | Export a SELECT over a saved table as CSV. |
 
+Saved-table creation accepts an optional `Idempotency-Key` header containing a UUID. Reuse the same key and request body after a timeout to retrieve the same table; using that key for different input returns HTTP 409. The existing name-conflict rule still applies when no key is supplied.
+
 Stored-file downloads were verified on 2026-09-14. They return attachments without
 rerunning SQL or processing. Original CSV downloads preserve bytes and use an
 encoded original filename with an ASCII UUID fallback. Limits are 10 MiB for raw

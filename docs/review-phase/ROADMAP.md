@@ -39,6 +39,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R02 — Prove the full stack from a clean environment
 
+- **Status:** Partially verified on 2026-11-14; clean disposable-stack acceptance is pending. See [R02 record](R02-clean-stack-verification.md).
 - **Why:** Mocked CI tests cannot prove the broker, worker, database and object store work together (audit M-02).
 - **Do:** Extend the synthetic smoke test to check Parquet/CSV download and expected rows; add readiness checks and a separate disposable Compose integration job in CI.
 - **Together:** Start an isolated clean stack, upload the sample, poll a terminal run, query/save/download, capture commands and outcomes, then make CI fail on any missing step.
@@ -46,6 +47,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R03 — Scan history and state the local scope clearly
 
+- **Status:** Complete for the local scope on 2026-11-14. Gitleaks scanned all 17 commits; its one redacted finding was a Docker container ID. See [R03 record](R03-security-scope.md).
 - **Why:** Historical demo credentials are known, but there has been no full-history secret scan (audit M-05). README status and limits need to match the new phase.
 - **Do:** Run a history-aware scanner, inspect matches without publishing secret values, record tool/version and redacted findings. Correct README security, verification and phase statements.
 - **Together:** Learn the scanner's history mode, classify demo values versus real credentials, rotate only confirmed real credentials, and check `.gitignore` and loopback bindings.
@@ -53,6 +55,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R04 — Make the portfolio story reproducible
 
+- **Status:** README opening, diagram, synthetic walkthrough, and shell quick starts updated; clean-stack reproduction remains unverified with R02.
 - **Why:** The first README screen and ASCII diagram understate the implemented workflow (portfolio P0.1–P0.3).
 - **Do:** Add a user-focused opening, accurate Mermaid architecture, small synthetic register-to-download walkthrough, expected output, PowerShell and Bash quick starts, and links to the learning journal. Label Terraform/Kubernetes as API-only labs.
 - **Together:** Trace each diagram edge and command to source or a live run; capture real screenshots only if the platform is running. Record short decisions for PostgreSQL, MinIO, RabbitMQ and DuckDB as the later engineering sessions proceed.
@@ -60,6 +63,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R05 — Design interrupted-job recovery
 
+- **Status:** [Design draft](R05-recovery-design.md) records guarantees, state races, and migration policy; focused failure tests remain pending.
 - **Why:** A worker killed after claiming can leave `running` forever (architecture F1; audit H-01).
 - **Do:** Specify lease expiry, attempt limit, claim token, heartbeat/recovery trigger and migration for existing databases. Fence both PostgreSQL finalization **and object writes** so a stale attempt cannot overwrite a newer one.
 - **Together:** Draw state transitions and race cases; write focused failing tests for death after claim, redelivery, expired lease, stale worker resume and exhausted retries.
@@ -67,6 +71,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R06 — Implement and fault-test job recovery
 
+- **Status:** Code and focused tests added; live crash/retry fault injection pending. See [R06–R10 checkpoint](R06-R10-implementation.md).
 - **Why:** A design alone leaves the known stranded-run failure in place.
 - **Do:** Implement the R05 lease and fencing model incrementally, with a bounded recovery loop or command and compatible schema migration.
 - **Together:** Run unit and live fault injection at claim, transform, object upload and final DB update; inspect retries and normal validation failures.
@@ -74,6 +79,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R07 — Make DB-to-broker handoff recoverable
 
+- **Status:** Transactional outbox and reconciler added; live broker-outage and ambiguous-confirm checks pending.
 - **Why:** A committed queued row can exist without a confirmed RabbitMQ message (architecture F2; audit H-02).
 - **Do:** Prefer a transactional outbox that stores run and publication intent together, then publishes with confirms. A smaller reconciler is acceptable only if it demonstrably closes the same stranded-queue case. Keep consumer handling safe for duplicate messages.
 - **Together:** Test broker outage, DB rollback, publisher death after broker confirmation and repeated delivery; expose pending intents for diagnosis.
@@ -81,6 +87,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R08 — Bound concurrent query work
 
+- **Status:** Process-local admission and overload tests added; live load measurement pending.
 - **Why:** A 256 MB DuckDB setting and 10-second child deadline do not cap aggregate API demand (architecture F3; audit M-01).
 - **Do:** Add configurable admission control and a clear overload response for this single API instance; measure total request time including storage transfer. Document that process-local control is not a multi-instance or OS memory guarantee.
 - **Together:** Test over-limit concurrency, slot release after success/error/timeout/cancellation and bounded waiting. Review worker timeout/output limits separately; implement them only if this local workload needs them.
@@ -88,6 +95,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R09 — Reconcile uploads and stored artifacts
 
+- **Status:** Ambiguous cleanup removed and read-only inventory added; live uncertainty and object-loss checks pending.
 - **Why:** A lost DB commit response can trigger raw-object deletion even if metadata committed; other failures leave missing or orphaned objects (audit M-04; architecture F5).
 - **Do:** Remove unsafe cleanup on ambiguous commit, use stable upload identity for outcome lookup, and add a read-only report of referenced missing objects and unreferenced raw/curated objects. Add size/checksum metadata where it provides a verifiable benefit.
 - **Together:** Inject uncertain commit, missing object and orphan cases. Review the report before considering any automatic deletion.
@@ -95,6 +103,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R10 — Make saved-table retries predictable and close the review
 
+- **Status:** Optional idempotency key and focused tests added; migration and full acceptance pending.
 - **Why:** A repeated save can create a second result or leave an uncertain object/metadata outcome (architecture F4).
 - **Do:** Define an idempotency key or stable operation ID, preserve existing name-conflict behavior for different operations, and reconcile uncertain results. Finish the short architectural decision notes and run the full acceptance checklist.
 - **Together:** Test repeat after timeout, MinIO success with DB failure, name conflict, old-data compatibility, full pytest and live Compose workflow. Compare every final claim with evidence.

@@ -6,6 +6,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY scripts ./scripts
 
 # Both API and worker use this image; neither needs root privileges.
 RUN useradd --create-home --uid 10001 platform

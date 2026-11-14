@@ -4,25 +4,58 @@ Run with the Compose API and worker running:
     python scripts/verify_saved_tables.py
 """
 
+import csv
 import json
+import os
 import time
+from decimal import Decimal
+from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 
+import duckdb
 import httpx
 
 
+def parquet_rows(content, sql):
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "download.parquet"
+        path.write_bytes(content)
+        with duckdb.connect(":memory:") as connection:
+            connection.read_parquet(str(path)).create_view("dataset")
+            return connection.execute(sql).fetchall()
+
+
 def main():
-    label = f"session20-{uuid4().hex[:8]}"
-    with httpx.Client(base_url="http://localhost:8000", timeout=30) as client:
+    label = f"smoke-{uuid4().hex[:8]}"
+    with httpx.Client(base_url=os.getenv("PLATFORM_API_URL", "http://localhost:8000"), timeout=30) as client:
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                health = client.get("/db-health")
+                if health.status_code == 200:
+                    break
+            except httpx.RequestError:
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError("API and database did not become ready")
+            time.sleep(1)
+
         def post(path, **kwargs):
             response = client.post(path, **kwargs)
-            response.raise_for_status()
+            if response.is_error:
+                raise RuntimeError(f"POST {path} returned {response.status_code}: {response.text}")
             return response.json()
 
         dataset = post("/datasets", json={"name": label})
+        source_csv = b"region,amount\nnorth,10\nnorth,20\nsouth,5\n"
         upload = post(f"/datasets/{dataset['id']}/uploads", files={
-            "file": ("sales.csv", b"region,amount\nnorth,10\nnorth,20\nsouth,5\n", "text/csv"),
+            "file": ("sales.csv", source_csv, "text/csv"),
         })
+        raw = client.get(f"/uploads/{upload['id']}/download")
+        raw.raise_for_status()
+        assert raw.content == source_csv
         run = post(f"/uploads/{upload['id']}/process")
         run_id = run["run_id"]
         deadline = time.monotonic() + 30
@@ -36,6 +69,11 @@ def main():
                 raise RuntimeError(f"Run did not finish: {run_id}")
             time.sleep(0.5)
         assert state["status"] == "succeeded", state
+        output = client.get(f"/processing-runs/{run_id}/download")
+        output.raise_for_status()
+        assert parquet_rows(output.content, "SELECT region, amount FROM dataset ORDER BY region, amount") == [
+            ("north", 10), ("north", 20), ("south", 5),
+        ]
 
         sql = "SELECT region, SUM(amount) AS total FROM dataset GROUP BY region ORDER BY region"
         preview = post(f"/processing-runs/{run_id}/query", json={"sql": sql, "max_rows": 1})
@@ -44,6 +82,18 @@ def main():
         saved = post(f"/processing-runs/{run_id}/tables", json=request)
         assert saved["row_count"] == 2
         table_id = saved["id"]
+        table_file = client.get(f"/tables/{table_id}/download")
+        table_file.raise_for_status()
+        assert parquet_rows(table_file.content, "SELECT region, total FROM dataset ORDER BY region") == [
+            ("north", 30), ("south", 5),
+        ]
+        exported = client.post(f"/tables/{table_id}/query/csv", json={"sql": "SELECT region, total FROM dataset ORDER BY region"})
+        exported.raise_for_status()
+        csv_rows = list(csv.reader(StringIO(exported.content.decode("utf-8"), newline="")))
+        assert csv_rows[0] == ["region", "total"], csv_rows
+        assert [(region, Decimal(total)) for region, total in csv_rows[1:]] == [
+            ("north", Decimal(30)), ("south", Decimal(5)),
+        ], csv_rows
         result = post(f"/tables/{table_id}/query", json={"sql": "SELECT * FROM dataset ORDER BY region"})
         assert result["rows"] == [["north", 30], ["south", 5]]
         assert client.get(f"/tables/{table_id}").json()["name"] == request["name"]

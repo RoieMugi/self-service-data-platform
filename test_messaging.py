@@ -27,7 +27,7 @@ def submission(monkeypatch):
     dependencies.get_upload.return_value = {"id": UPLOAD_ID}
     dependencies.create_processing_run.return_value = {"id": RUN_ID}
     for name in (
-        "get_upload", "create_processing_run", "publish_processing_run",
+        "get_upload", "create_processing_run", "publish_pending_run",
         "execute_processing", "try_to_record_processing_failure",
     ):
         monkeypatch.setattr(api, name, getattr(dependencies, name))
@@ -48,17 +48,17 @@ def test_submission_publishes_existing_run_without_execution(submission):
     assert response.headers["X-Correlation-ID"] == CORRELATION_ID
     assert submission.mock_calls == [
         call.get_upload(UPLOAD_ID),
-        call.create_processing_run(UPLOAD_ID),
-        call.publish_processing_run(run_id=RUN_ID, correlation_id=CORRELATION_ID),
+        call.create_processing_run(UPLOAD_ID, CORRELATION_ID),
+        call.publish_pending_run(RUN_ID),
     ]
 
 
 def test_submission_publish_failure_preserves_run(submission):
-    submission.publish_processing_run.side_effect = RuntimeError("Confirmation lost")
+    submission.publish_pending_run.side_effect = RuntimeError("Confirmation lost")
     response = submit()
-    assert response.status_code == 503
-    assert str(RUN_ID) in response.json()["detail"]
-    submission.create_processing_run.assert_called_once_with(UPLOAD_ID)
+    assert response.status_code == 202
+    assert response.json()["run_id"] == str(RUN_ID)
+    submission.create_processing_run.assert_called_once_with(UPLOAD_ID, CORRELATION_ID)
     submission.execute_processing.assert_not_called()
     submission.try_to_record_processing_failure.assert_not_called()
 
@@ -73,7 +73,7 @@ def test_submission_does_not_publish_when_preparation_fails(submission, failure)
         submission.create_processing_run.side_effect = RuntimeError("Insert failed")
     response = submit()
     assert response.status_code == (404 if failure == "missing" else 500)
-    submission.publish_processing_run.assert_not_called()
+    submission.publish_pending_run.assert_not_called()
     submission.execute_processing.assert_not_called()
     if failure != "creation":
         submission.create_processing_run.assert_not_called()
@@ -204,6 +204,15 @@ def test_worker_does_not_acknowledge_other_unclaimed_runs(unclaimed_run, status)
         call.get_processing_run(RUN_ID),
     ]
     assert channel.mock_calls == []
+
+
+def test_worker_acknowledges_duplicate_with_recoverable_running_lease(unclaimed_run):
+    unclaimed_run.get_processing_run.return_value = {
+        "id": RUN_ID, "status": "running", "lease_expires_at": "future",
+    }
+    channel = Mock()
+    worker.handle_processing_message(channel, Mock(delivery_tag=7), None, BODY)
+    channel.basic_ack.assert_called_once_with(delivery_tag=7)
 
 
 def test_worker_does_not_acknowledge_when_run_lookup_fails(unclaimed_run):

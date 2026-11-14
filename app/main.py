@@ -4,6 +4,10 @@
 import json
 import logging
 import os
+from contextvars import ContextVar
+from functools import wraps
+from threading import BoundedSemaphore
+from threading import Event, Thread
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -18,6 +22,7 @@ import psycopg
 from fastapi import (
     FastAPI,
     File,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -44,6 +49,24 @@ from app.query_executor import (
     execute_query,
     execute_saved_query,
 )
+
+ACTIVE_CLAIM_TOKEN: ContextVar[UUID | None] = ContextVar("active_claim_token", default=None)
+ACTIVE_LEASE_STOP: ContextVar[Event | None] = ContextVar("active_lease_stop", default=None)
+LEASE_SECONDS = 300
+MAX_RUN_ATTEMPTS = 3
+QUERY_SLOTS = BoundedSemaphore(max(1, int(os.getenv("QUERY_CONCURRENCY_LIMIT", "2"))))
+
+
+def admit_query(function):
+    @wraps(function)
+    def limited(*args, **kwargs):
+        if not QUERY_SLOTS.acquire(blocking=False):
+            raise HTTPException(status_code=429, detail="Too many queries are running. Retry shortly.")
+        try:
+            return function(*args, **kwargs)
+        finally:
+            QUERY_SLOTS.release()
+    return limited
 
 
 class JsonLogFormatter(logging.Formatter):
@@ -579,7 +602,19 @@ def get_upload(upload_id: UUID):
             return cursor.fetchone()
 
 
-def create_processing_run(upload_id: UUID):
+@app.get("/uploads/{upload_id}", response_model=UploadResponse)
+def read_upload(upload_id: UUID):
+    try:
+        upload = get_upload(upload_id)
+    except Exception:
+        logger.exception("Upload metadata lookup failed")
+        raise HTTPException(status_code=503, detail="Upload metadata unavailable.")
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    return upload
+
+
+def create_processing_run(upload_id: UUID, correlation_id: str | None = None):
     """
     Create and return a queued processing record.
     """
@@ -601,10 +636,89 @@ def create_processing_run(upload_id: UUID):
                 """,
                 (upload_id,),
             )
-            return cursor.fetchone()
+            run = cursor.fetchone()
+            if correlation_id is not None:
+                cursor.execute(
+                    "INSERT INTO processing_outbox (run_id, correlation_id) VALUES (%s, %s)",
+                    (run["id"], correlation_id),
+                )
+            return run
+
+
+def publish_pending_run(run_id: UUID) -> bool:
+    """Lock one intent through broker confirmation; uncertainty leaves it pending."""
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """SELECT o.run_id, o.correlation_id FROM processing_outbox o
+                   JOIN processing_runs r ON r.id = o.run_id
+                   WHERE o.run_id = %s AND o.published_at IS NULL AND r.status = 'queued'
+                   FOR UPDATE OF o SKIP LOCKED""",
+                (run_id,),
+            )
+            intent = cursor.fetchone()
+            if intent is None:
+                return False
+            publish_processing_run(intent["run_id"], str(intent["correlation_id"]))
+            cursor.execute(
+                "UPDATE processing_outbox SET published_at = CURRENT_TIMESTAMP WHERE run_id = %s",
+                (run_id,),
+            )
+            return True
+
+
+def publish_pending_runs(limit: int = 20) -> int:
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """SELECT o.run_id FROM processing_outbox o
+                   JOIN processing_runs r ON r.id = o.run_id
+                   WHERE o.published_at IS NULL AND r.status = 'queued'
+                   ORDER BY o.created_at, o.run_id LIMIT %s""",
+                (limit,),
+            )
+            run_ids = [row[0] for row in cursor.fetchall()]
+    return sum(publish_pending_run(run_id) for run_id in run_ids)
+
+
+def recover_expired_runs(limit: int = 20) -> int:
+    """Requeue expired attempts or fail runs that exhausted their attempt budget."""
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """SELECT id, attempt_count FROM processing_runs
+                   WHERE status = 'running' AND lease_expires_at < CURRENT_TIMESTAMP
+                   ORDER BY lease_expires_at, id FOR UPDATE SKIP LOCKED LIMIT %s""",
+                (limit,),
+            )
+            expired = cursor.fetchall()
+            for run in expired:
+                if run["attempt_count"] >= MAX_RUN_ATTEMPTS:
+                    cursor.execute(
+                        """UPDATE processing_runs SET status = 'failed',
+                           completed_at = CURRENT_TIMESTAMP, row_count = NULL,
+                           curated_object_key = NULL, validation_status = NULL,
+                           error_message = 'Processing attempts exhausted after worker interruption.',
+                           claim_token = NULL, lease_expires_at = NULL WHERE id = %s""",
+                        (run["id"],),
+                    )
+                else:
+                    cursor.execute(
+                        """UPDATE processing_runs SET status = 'queued', started_at = NULL,
+                           claim_token = NULL, lease_expires_at = NULL WHERE id = %s""",
+                        (run["id"],),
+                    )
+                    cursor.execute(
+                        """INSERT INTO processing_outbox (run_id, correlation_id)
+                           VALUES (%s, gen_random_uuid())
+                           ON CONFLICT (run_id) DO UPDATE SET published_at = NULL""",
+                        (run["id"],),
+                    )
+            return len(expired)
 
 def claim_processing_run(run_id: UUID):
     """Start a run only if it is still queued."""
+    token = uuid4()
     # One conditional UPDATE avoids a read-then-write race between consumers.
     # Only the caller receiving a row from RETURNING may execute this run.
     with get_db_connection() as conn:
@@ -614,7 +728,10 @@ def claim_processing_run(run_id: UUID):
                 UPDATE processing_runs
                 SET
                     status = 'running',
-                    started_at = CURRENT_TIMESTAMP
+                    started_at = CURRENT_TIMESTAMP,
+                    attempt_count = attempt_count + 1,
+                    claim_token = %s,
+                    lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '300 seconds'
                 WHERE id = %s
                   AND status = 'queued'
                 RETURNING
@@ -622,11 +739,16 @@ def claim_processing_run(run_id: UUID):
                     upload_id,
                     status,
                     created_at,
-                    started_at;
+                    started_at,
+                    attempt_count;
                 """,
-                (run_id,),
+                (token, run_id),
             )
-            return cursor.fetchone()
+            run = cursor.fetchone()
+            if run is not None:
+                run["claim_token"] = token
+                run["attempt_count"] = run.get("attempt_count", 1)
+            return run
 
 def complete_processing_run(
     run_id: UUID,
@@ -647,9 +769,13 @@ def complete_processing_run(
                     row_count = %s,
                     curated_object_key = %s,
                     validation_status = 'passed',
-                    error_message = NULL
+                    error_message = NULL,
+                    claim_token = NULL,
+                    lease_expires_at = NULL
                 WHERE id = %s
                   AND status = 'running'
+                  AND claim_token = %s
+                  AND lease_expires_at > CURRENT_TIMESTAMP
                 RETURNING
                     id,
                     upload_id,
@@ -665,6 +791,7 @@ def complete_processing_run(
                     row_count,
                     curated_object_key,
                     run_id,
+                    ACTIVE_CLAIM_TOKEN.get(),
                 ),
             )
             return cursor.fetchone()
@@ -693,9 +820,13 @@ def fail_processing_run(
                     row_count = NULL,
                     curated_object_key = NULL,
                     validation_status = %s,
-                    error_message = %s
+                    error_message = %s,
+                    claim_token = NULL,
+                    lease_expires_at = NULL
                 WHERE id = %s
                   AND status = 'running'
+                  AND claim_token = %s
+                  AND lease_expires_at > CURRENT_TIMESTAMP
                 RETURNING
                     id,
                     upload_id,
@@ -711,6 +842,7 @@ def fail_processing_run(
                     validation_status,
                     error_message,
                     run_id,
+                    ACTIVE_CLAIM_TOKEN.get(),
                 ),
             )
             return cursor.fetchone()
@@ -790,7 +922,8 @@ def get_processing_run(run_id: UUID):
                     row_count,
                     curated_object_key,
                     validation_status,
-                    error_message
+                    error_message,
+                    lease_expires_at
                 FROM processing_runs
                 WHERE id = %s;
                 """,
@@ -857,21 +990,11 @@ def upload_dataset_file(
         )
     except Exception:
         logger.exception("Upload metadata insert failed")
-
-        # Best-effort compensation across two stores, not an atomic rollback.
-        # This path cannot distinguish a rejected insert from a lost commit reply;
-        # cleanup can leave a dangling row if the database actually committed.
-        try:
-            minio_client.remove_object(MINIO_RAW_BUCKET, object_key)
-        except Exception:
-            logger.exception(
-                "Failed to remove orphaned object: %s",
-                object_key,
-            )
-
+        # A lost commit response is ambiguous. Preserve the object until a
+        # read-only inventory can establish whether metadata committed.
         raise HTTPException(
             status_code=500,
-            detail="Upload registration failed.",
+            detail={"message": "Upload registration could not be confirmed. Check this upload ID before retrying.", "upload_id": str(upload_id)},
         )
 
 def record_processing_metrics(
@@ -951,7 +1074,7 @@ def submit_processing(
     timer_started_at = monotonic()
 
     try:
-        processing_run = create_processing_run(upload_id)
+        processing_run = create_processing_run(upload_id, correlation_id)
     except Exception:
         logger.exception(
             "Processing run creation failed",
@@ -973,29 +1096,17 @@ def submit_processing(
             message="Processing run creation failed.",
         )
 
-    # The database commit and broker publish are separate operations. Without an
-    # outbox, a failure between them can leave a queued row with no message.
+    # The committed outbox intent survives an API crash or broker outage.
     try:
-        publish_processing_run(
-            run_id=processing_run["id"],
-            correlation_id=correlation_id,
-        )
+        publish_pending_run(processing_run["id"])
     except Exception:
-        # A missing confirmation does not prove delivery failed. Preserve the run
-        # and return its ID so the caller can inspect state before resubmitting.
+        # The reconciler retries ambiguous publication; the run ID remains stable.
         logger.exception(
-            "Processing run publication failed",
+            "Processing run publication pending recovery",
             extra={
                 "run_id": str(processing_run["id"]),
                 "correlation_id": correlation_id,
             },
-        )
-        raise ProcessingError(
-            outcome="submission_failed",
-            message=(
-                "Processing submission could not be confirmed. "
-                f"Check processing run {processing_run['id']} before retrying."
-            ),
         )
 
     return ProcessingSubmissionResponse(
@@ -1004,11 +1115,60 @@ def submit_processing(
     )
 
 
-def execute_processing(
+def renew_processing_lease(run_id: UUID, token: UUID) -> bool:
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """UPDATE processing_runs
+                   SET lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '300 seconds'
+                   WHERE id = %s AND status = 'running' AND claim_token = %s
+                     AND lease_expires_at > CURRENT_TIMESTAMP
+                   RETURNING id""",
+                (run_id, token),
+            )
+            return cursor.fetchone() is not None
+
+
+def start_lease_heartbeat(run_id: UUID, token: UUID) -> Event:
+    stop = Event()
+
+    def heartbeat():
+        while not stop.wait(LEASE_SECONDS / 3):
+            try:
+                if not renew_processing_lease(run_id, token):
+                    logger.error("Processing lease lost", extra={"run_id": str(run_id)})
+                    break
+            except Exception:
+                logger.exception("Processing lease renewal failed", extra={"run_id": str(run_id)})
+
+    Thread(target=heartbeat, name=f"lease-{run_id}", daemon=True).start()
+    return stop
+
+
+def execute_processing(run_id: UUID, correlation_id: str):
+    ACTIVE_LEASE_STOP.set(None)
+    try:
+        return _execute_processing(run_id, correlation_id)
+    finally:
+        stopper = ACTIVE_LEASE_STOP.get()
+        if stopper is not None:
+            stopper.set()
+        ACTIVE_LEASE_STOP.set(None)
+        ACTIVE_CLAIM_TOKEN.set(None)
+
+
+def processing_attempt_key(upload, run_id, attempt_count=None):
+    """Separate attempts so a stale worker cannot overwrite a later artifact."""
+    attempt_path = f"attempt-{attempt_count}/" if attempt_count is not None else ""
+    return f'{upload["dataset_id"]}/{upload["id"]}/{run_id}/{attempt_path}data.parquet'
+
+
+def _execute_processing(
     run_id: UUID,
     correlation_id: str,
 ):
     """Claim and process an existing queued run."""
+    ACTIVE_CLAIM_TOKEN.set(None)
     timer_started_at = monotonic()
 
     try:
@@ -1044,6 +1204,9 @@ def execute_processing(
         )
 
     upload_id = claimed_run["upload_id"]
+    ACTIVE_CLAIM_TOKEN.set(claimed_run.get("claim_token"))
+    if claimed_run.get("claim_token") is not None:
+        ACTIVE_LEASE_STOP.set(start_lease_heartbeat(run_id, claimed_run["claim_token"]))
 
     try:
         upload = get_upload(upload_id)
@@ -1182,13 +1345,10 @@ def execute_processing(
         )
 
     # Give each processing run its own output path.
-    curated_object_key = (
-        f'{upload["dataset_id"]}/'
-        f'{upload["id"]}/'
-        f"{run_id}/"
-        "data.parquet"
-    )
+    curated_object_key = processing_attempt_key(upload, run_id, claimed_run.get("attempt_count"))
     try:
+        if claimed_run.get("claim_token") is not None and not renew_processing_lease(run_id, claimed_run["claim_token"]):
+            raise RuntimeError("Processing lease expired before artifact upload")
         upload_curated_object(
             curated_object_key,
             parquet_content,
@@ -1354,6 +1514,7 @@ def read_processing_run(run_id: UUID):
     response_model=QueryResponse,
     status_code=200,
 )
+@admit_query
 def query_processing_run(run_id: UUID, query: QueryRequest):
     """Preview a successful run's Parquet output using SELECT over dataset.
 
@@ -1418,6 +1579,13 @@ def get_saved_table(table_id: UUID):
             return cursor.fetchone()
 
 
+def get_saved_table_by_operation(operation_id: UUID):
+    with get_db_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SELECT * FROM saved_tables WHERE operation_id = %s", (operation_id,))
+            return cursor.fetchone()
+
+
 @app.get("/tables/{table_id}", response_model=SavedTableResponse)
 def read_saved_table(table_id: UUID):
     try:
@@ -1449,6 +1617,7 @@ def list_saved_tables(
 
 
 @app.post("/tables/{table_id}/query", response_model=QueryResponse)
+@admit_query
 def query_saved_table(table_id: UUID, query: QueryRequest):
     table = read_saved_table(table_id)
     return preview_artifact(table["object_key"], query)
@@ -1544,6 +1713,7 @@ def export_query_csv(object_key: str, query: CsvQueryRequest, source_id: UUID):
     response_class=Response,
     responses={200: {"content": {"text/csv": {}}, "description": "CSV query result"}},
 )
+@admit_query
 def export_processing_query(run_id: UUID, query: CsvQueryRequest):
     """Download full bounded query results without saving a table."""
     return export_query_csv(processing_artifact_key(run_id), query, run_id)
@@ -1554,6 +1724,7 @@ def export_processing_query(run_id: UUID, query: CsvQueryRequest):
     response_class=Response,
     responses={200: {"content": {"text/csv": {}}, "description": "CSV query result"}},
 )
+@admit_query
 def export_saved_table_query(table_id: UUID, query: CsvQueryRequest):
     """Export a SELECT over the selected saved table as CSV."""
     table = read_saved_table(table_id)
@@ -1568,18 +1739,35 @@ def insert_saved_table(
     size_bytes,
     source_run_id,
     source_table_id,
+    operation_id=None,
 ):
     with get_db_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cursor:
-            cursor.execute(
-                """INSERT INTO saved_tables
+            statement = """INSERT INTO saved_tables
                    (id, name, description, source_run_id, source_table_id,
                     query_sql, object_key, row_count, size_bytes)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
-                (table_id, request.name, request.description, source_run_id,
-                 source_table_id, request.sql, object_key, row_count, size_bytes),
-            )
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *"""
+            values = (table_id, request.name, request.description, source_run_id,
+                      source_table_id, request.sql, object_key, row_count, size_bytes)
+            if operation_id is not None:
+                statement = """INSERT INTO saved_tables
+                    (id, name, description, source_run_id, source_table_id,
+                     query_sql, object_key, row_count, size_bytes, operation_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *"""
+                values += (operation_id,)
+            cursor.execute(statement, values)
             return cursor.fetchone()
+
+
+def matching_operation(operation_id, request, source_run_id, source_table_id):
+    table = get_saved_table_by_operation(operation_id)
+    if table is None:
+        return None
+    if (table["name"] != request.name or table["description"] != request.description
+            or table["query_sql"] != request.sql or table["source_run_id"] != source_run_id
+            or table["source_table_id"] != source_table_id):
+        raise HTTPException(status_code=409, detail="Idempotency key belongs to a different save request.")
+    return table
 
 
 def save_query_table(
@@ -1588,7 +1776,12 @@ def save_query_table(
     *,
     source_run_id: UUID | None = None,
     source_table_id: UUID | None = None,
+    operation_id: UUID | None = None,
 ):
+    if operation_id is not None:
+        prior = matching_operation(operation_id, request, source_run_id, source_table_id)
+        if prior is not None:
+            return prior
     # Persist a standalone Parquet snapshot; later reads do not rerun query_sql.
     content = load_query_artifact(object_key)
     try:
@@ -1608,21 +1801,34 @@ def save_query_table(
         raise HTTPException(status_code=503, detail="Saved table could not be stored.")
 
     try:
-        return insert_saved_table(
-            table_id, request, output_key, row_count,
-            len(parquet), source_run_id, source_table_id,
-        )
+        arguments = (table_id, request, output_key, row_count, len(parquet), source_run_id, source_table_id)
+        if operation_id is None:
+            return insert_saved_table(*arguments)
+        return insert_saved_table(*arguments, operation_id=operation_id)
     except UniqueViolation:
         # PostgreSQL rejected this insert: it is safe to remove only our new object.
         try:
             get_minio_client().remove_object(MINIO_CURATED_BUCKET, output_key)
         except Exception:
             logger.exception("Unregistered table cleanup failed", extra={"table_id": str(table_id)})
+        if operation_id is not None:
+            prior = matching_operation(operation_id, request, source_run_id, source_table_id)
+            if prior is not None:
+                return prior
         raise HTTPException(status_code=409, detail="A saved table with that name already exists.")
     except Exception:
         # A lost commit response is ambiguous. Preserve the object in case the row
         # committed; deleting it could corrupt a successfully registered table.
         logger.exception("Saved table registration uncertain", extra={"table_id": str(table_id)})
+        if operation_id is not None:
+            try:
+                prior = matching_operation(operation_id, request, source_run_id, source_table_id)
+                if prior is not None:
+                    return prior
+            except HTTPException:
+                raise
+            except Exception:
+                logger.exception("Idempotency lookup unavailable")
         raise HTTPException(status_code=503, detail={
             "message": "Table registration could not be confirmed. Check this table ID before retrying.",
             "table_id": str(table_id),
@@ -1634,8 +1840,9 @@ def save_query_table(
     response_model=SavedTableResponse,
     status_code=201,
 )
-def save_processing_run_table(run_id: UUID, request: SaveQueryTableRequest):
-    return save_query_table(processing_artifact_key(run_id), request, source_run_id=run_id)
+@admit_query
+def save_processing_run_table(run_id: UUID, request: SaveQueryTableRequest, idempotency_key: UUID | None = Header(default=None, alias="Idempotency-Key")):
+    return save_query_table(processing_artifact_key(run_id), request, source_run_id=run_id, operation_id=idempotency_key)
 
 
 @app.post(
@@ -1643,6 +1850,7 @@ def save_processing_run_table(run_id: UUID, request: SaveQueryTableRequest):
     response_model=SavedTableResponse,
     status_code=201,
 )
-def save_derived_table(table_id: UUID, request: SaveQueryTableRequest):
+@admit_query
+def save_derived_table(table_id: UUID, request: SaveQueryTableRequest, idempotency_key: UUID | None = Header(default=None, alias="Idempotency-Key")):
     source = read_saved_table(table_id)
-    return save_query_table(source["object_key"], request, source_table_id=table_id)
+    return save_query_table(source["object_key"], request, source_table_id=table_id, operation_id=idempotency_key)
