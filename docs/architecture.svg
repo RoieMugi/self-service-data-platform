@@ -45,9 +45,9 @@
     <text class="name" x="136" y="239">Client</text><text class="detail" x="136" y="264">API consumer</text>
     <text class="name" x="370" y="239">FastAPI</text><text class="detail" x="370" y="264">upload | submit | query</text>
     <text class="name" x="635" y="239">PostgreSQL</text><text class="detail" x="635" y="264">metadata | runs | outbox</text>
-    <text class="name" x="915" y="239">Reconciler</text><text class="detail" x="915" y="264">republish | recover leases</text>
+    <text class="name" x="915" y="233">Reconciler</text><text class="detail" x="915" y="257">republish pending work</text><text class="detail" x="915" y="276">recover expired leases</text>
     <text class="name" x="1175" y="239">RabbitMQ</text><text class="detail" x="1175" y="264">work requests</text>
-    <text class="name" x="1439" y="239">Worker</text><text class="detail" x="1439" y="264">claim token | lease heartbeat</text>
+    <text class="name" x="1439" y="233">Worker</text><text class="detail" x="1439" y="257">claim token</text><text class="detail" x="1439" y="276">lease heartbeat</text>
   </g>
   <path class="line" d="M220 246 H280"/>
   <path class="line" d="M460 246 H520"/>
@@ -70,9 +70,9 @@
     <rect x="1280" y="480" width="268" height="92" rx="12" fill="#fffbeb" stroke="#fcd34d"/>
   </g>
   <g>
-    <text class="name" x="395" y="518">PGSTY Silo</text><text class="detail" x="395" y="543">raw CSV | S3-compatible</text>
+    <text class="name" x="395" y="513">PGSTY Silo</text><text class="detail" x="395" y="538">raw CSV</text><text class="detail" x="395" y="557">S3-compatible storage</text>
     <text class="name" x="920" y="518">DuckDB</text><text class="detail" x="920" y="543">CSV to Parquet transform</text>
-    <text class="name" x="1414" y="518">PGSTY Silo</text><text class="detail" x="1414" y="543">curated Parquet | S3-compatible</text>
+    <text class="name" x="1414" y="513">PGSTY Silo</text><text class="detail" x="1414" y="538">curated Parquet</text><text class="detail" x="1414" y="557">S3-compatible storage</text>
   </g>
   <path class="line" d="M520 526 H805"/>
   <text class="label" x="663" y="508">Worker reads CSV</text>
