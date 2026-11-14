@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.env
+.env.*
+!.env.example
+
+# Terraform local providers and state
+**/.terraform/
+*.tfstate
+*.tfstate.*
+
+# Terraform saved plans (use this extension when saving plans)
+*.tfplan
+*.tfvars
+*.tfvars.json
+
+# Generated local download/export verification copies
+/artifacts/
+
+# Local working records, review notes, and editor settings
+/docs/sessions/
+/docs/review-phase/
+/PROJECT_HISTORY.md
+/Platform_Engineering_Study_Notes.md
+/.vscode/
