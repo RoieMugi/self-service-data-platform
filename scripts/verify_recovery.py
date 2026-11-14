@@ -140,6 +140,29 @@ def force_expire_running(db, run_id):
             assert cursor.fetchone() is not None, "Killed worker did not leave a running row"
 
 
+def verify_submission_rollback(db, upload_id):
+    run_id = uuid4()
+    try:
+        with db.transaction():
+            with db.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO processing_runs (id, upload_id, status) VALUES (%s, %s, 'queued')",
+                    (run_id, upload_id),
+                )
+                cursor.execute(
+                    "INSERT INTO processing_outbox (run_id, correlation_id) VALUES (%s, %s)",
+                    (run_id, uuid4()),
+                )
+                raise RuntimeError("Deliberate submission rollback")
+    except RuntimeError as exc:
+        assert str(exc) == "Deliberate submission rollback"
+    with db.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM processing_runs WHERE id = %s", (run_id,))
+        assert cursor.fetchone()[0] == 0
+        cursor.execute("SELECT COUNT(*) FROM processing_outbox WHERE run_id = %s", (run_id,))
+        assert cursor.fetchone()[0] == 0
+
+
 def main():
     require_disposable_ci()
     settings = config()
@@ -212,6 +235,14 @@ def main():
             interrupted = run_row(db, killed_id)
             assert interrupted["status"] == "running" and interrupted["attempt_count"] == 1, interrupted
             force_expire_running(db, killed_id)
+            os.environ["DATABASE_URL"] = database_url
+            from app.main import ACTIVE_CLAIM_TOKEN, complete_processing_run
+            context = ACTIVE_CLAIM_TOKEN.set(interrupted["claim_token"])
+            try:
+                assert complete_processing_run(killed_id, 1, "stale/should-not-publish.parquet") is None
+            finally:
+                ACTIVE_CLAIM_TOKEN.reset(context)
+            assert run_row(db, killed_id)["curated_object_key"] is None
             wait_for("killed run to be requeued", lambda: run_with_status(db, killed_id, "queued"))
             compose("start", "worker")
             worker_running = True
@@ -244,6 +275,7 @@ def main():
 
             # R07: submission commits while the broker is offline. The
             # reconciler publishes the pending intent after broker recovery.
+            verify_submission_rollback(db, upload_id)
             compose("stop", "rabbitmq")
             broker_running = False
             upload_id = make_upload(client, "broker")
