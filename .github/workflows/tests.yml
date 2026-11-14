@@ -57,6 +57,11 @@ jobs:
           ALLOW_DISPOSABLE_FAULTS: "1"
         run: python -m scripts.verify_recovery
 
+      - name: Verify query and artifact boundaries
+        env:
+          ALLOW_DISPOSABLE_FAULTS: "1"
+        run: python -m scripts.verify_review_boundaries
+
       - name: Capture service logs
         if: always()
         run: docker compose logs --no-color > compose-integration.log
