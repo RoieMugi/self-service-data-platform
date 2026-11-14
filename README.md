@@ -14,7 +14,7 @@ FastAPI registers datasets, stores original CSV files in PGSTY Silo, and records
 
 For previews, saved tables, and CSV exports, FastAPI reads curated Parquet from Silo and invokes a bounded DuckDB child process. It also serves original CSV and Parquet downloads. Silo is S3-compatible, and the application uses the MinIO Python SDK to access it. Prometheus collects API and worker metrics for Grafana.
 
-The [architecture decisions](docs/architecture-decisions.md) explain the component choices. The [query and download guide](docs/query-tables.md) describes the API boundaries.
+The [architecture guide](docs/architecture.md) explains the flow and component choices. The [query and download guide](docs/query-tables.md) describes the API boundaries.
 
 ## Run locally
 
@@ -50,6 +50,8 @@ python scripts/verify_saved_tables.py
 ```
 
 The script creates a synthetic three-row CSV, checks the original download, waits for processing, previews and saves a regional query, downloads Parquet and CSV, and queries a derived grand total. Expected results are `north = 30`, `south = 5`, and `grand_total = 35`. Success prints the created IDs as JSON. The sample records remain in the current stack.
+
+For manual uploads, see the [small CSV examples](csv_test_files/README.md).
 
 Run the unit and API suite with `python -m pytest -q`. [GitHub Actions](https://github.com/RoieMugi/self-service-data-platform/actions) uses the same [docker-compose.yml](docker-compose.yml) in a fresh runner, then removes its volumes. It runs the smoke test plus recovery and boundary checks. The [verification guide](docs/verification.md) maps the checks to their claims and limits.
 
