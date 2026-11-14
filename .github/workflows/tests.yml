@@ -52,6 +52,11 @@ jobs:
       - name: Run full-stack smoke test
         run: python scripts/verify_saved_tables.py
 
+      - name: Verify worker and broker recovery
+        env:
+          ALLOW_DISPOSABLE_FAULTS: "1"
+        run: python scripts/verify_recovery.py
+
       - name: Capture service logs
         if: always()
         run: docker compose logs --no-color > compose-integration.log
