@@ -25,7 +25,7 @@ services:
       timeout: 5s
       retries: 12
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     command: server /data
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -38,7 +38,7 @@ services:
       timeout: 5s
       retries: 10
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-07-21T05-28-08Z
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
