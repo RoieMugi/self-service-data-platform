@@ -1181,10 +1181,11 @@ def execute_processing(
             message="The uploaded CSV could not be processed.",
         )
 
-    # Separate runs for the same upload share this output path.
+    # Give each processing run its own output path.
     curated_object_key = (
         f'{upload["dataset_id"]}/'
         f'{upload["id"]}/'
+        f"{run_id}/"
         "data.parquet"
     )
     try:

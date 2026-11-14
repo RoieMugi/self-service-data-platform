@@ -50,13 +50,14 @@ Fresh PostgreSQL volumes are initialized by `db/init.sql`. Existing volumes are 
 
 ## Current status and limits
 
-The Compose workflow and backend features through Session 022 are implemented. Session 023 reproduced the separate Terraform API lab and reviewed CI. A final Phase 1 closure review remains; Phase 1 has not been declared complete. The last recorded full test run was **200 passing tests in Session 022**; Session 023 did not rerun pytest. See the [latest session record](docs/sessions/023-deployment-wrap-up.md) for the evidence and scope.
+The Compose workflow and backend features through Session 022 are implemented. Session 023 reproduced the separate Terraform API lab and reviewed CI. **The owner marked Phase 1 complete on 2026-11-11. The Review and Improvement Phase is now active; Phase 2 has not started.** The earlier plan for a Phase 1 Session 024 is superseded by the [review roadmap](docs/review-phase/ROADMAP.md). [R01](docs/review-phase/R01-run-artifacts.md) gave each new processing run its own Parquet key. The owner reported **201 passing tests** and live verification of two distinct, downloadable run artifacts plus a readable legacy artifact. These checks were not independently rerun in the assistant's shell.
 
 The worker does not automatically recover a run interrupted after it was claimed. Database creation and queue publication are not atomic. The Terraform and Kubernetes directories are separate **API-only learning labs**, not deployments of the complete pipeline. Kubernetes' earlier host-port database connection is affected by the new loopback-only Compose binding; see its [updated lab guide](kubernetes/README.md) before reproducing it. LAN access, authentication, backup and restore, a web UI, and durable event streaming remain future work.
 
 ## Project records
 
 - [Query, saved table, and download guide](docs/query-tables.md)
+- [Review findings and improvement roadmap](docs/review-phase/ROADMAP.md)
 - [Session index and verification records](docs/sessions/README.md)
 - [Historical project journal and operational notes](PROJECT_HISTORY.md)
 - [Terraform API lab](Terraform/README.md) and [Kubernetes API lab](kubernetes/README.md)

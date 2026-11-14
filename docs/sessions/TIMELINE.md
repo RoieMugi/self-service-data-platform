@@ -1,5 +1,14 @@
 # Learning Journey Timeline
 
+**Current phase note (2026-11-11):** The owner marked Phase 1 complete and opened
+the [Review and Improvement Phase](../review-phase/ROADMAP.md). Phase 2 has not
+started. The Session 024 plan below records an earlier intention.
+
+**Review R01 (2026-11-14):** New processing runs now write to run-specific
+Parquet keys. The owner reported 201 passing tests and live verification of
+two separately downloadable runs plus a readable legacy run. See the
+[R01 record](../review-phase/R01-run-artifacts.md).
+
 ## Progress Overview
 
 **Latest, Session 023 (2026-11-10):** reviewed deployment ownership and CI;

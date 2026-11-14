@@ -4,6 +4,10 @@ This is the former root README, preserved as a session-era record. Its plans,
 credentials, and status statements describe their original context; use the
 [current project README](README.md) for setup and current scope.
 
+**Current phase note (2026-11-11):** The owner marked Phase 1 complete and opened
+the [Review and Improvement Phase](docs/review-phase/ROADMAP.md). Phase 2 has not
+started. Earlier references below to a pending Session 024 are historical plans.
+
 # Data Platform Engineering Journey
 
 This repository is a hands-on learning project for moving from data engineering

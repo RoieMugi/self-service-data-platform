@@ -592,8 +592,68 @@ def test_execute_processing_uses_existing_run_without_creating_another(monkeypat
     assert result["status"] == "succeeded"
     fake_complete.assert_called_once_with(
         run_id=run_id, row_count=1,
-        curated_object_key=f"dataset/{upload_id}/data.parquet",
+        curated_object_key=f"dataset/{upload_id}/{run_id}/data.parquet",
     )
+
+
+def test_two_runs_of_one_upload_keep_separate_downloadable_outputs(monkeypatch):
+    upload_id = UUID("cd49f308-e39e-4d87-a7f0-f72f75bde678")
+    run_ids = [
+        UUID("79d674f8-9a9b-4b31-8951-31c381b21429"),
+        UUID("d7ca7270-c972-4a57-b694-343095389e5e"),
+    ]
+    stored_objects = {}
+    stored_runs = {}
+    outputs = iter((b"PAR1first-run", b"PAR1second-run"))
+
+    monkeypatch.setattr(
+        main_module, "claim_processing_run",
+        lambda run_id: {"id": run_id, "upload_id": upload_id},
+    )
+    monkeypatch.setattr(
+        main_module, "get_upload",
+        lambda requested_id: {
+            "id": requested_id, "dataset_id": "dataset", "object_key": "raw.csv",
+        },
+    )
+    monkeypatch.setattr(main_module, "download_raw_object", lambda key: b"csv")
+    monkeypatch.setattr(
+        main_module, "convert_csv_to_parquet",
+        lambda content: (next(outputs), 1),
+    )
+    monkeypatch.setattr(
+        main_module, "upload_curated_object",
+        lambda key, content: stored_objects.__setitem__(key, content),
+    )
+
+    def complete_run(run_id, row_count, curated_object_key):
+        stored_runs[run_id] = {
+            "status": "succeeded", "curated_object_key": curated_object_key,
+        }
+        return {"status": "succeeded", "validation_status": "passed"}
+
+    monkeypatch.setattr(main_module, "complete_processing_run", complete_run)
+    monkeypatch.setattr(main_module, "get_processing_run", stored_runs.get)
+    monkeypatch.setattr(
+        main_module, "download_query_artifact", stored_objects.__getitem__,
+    )
+    monkeypatch.setattr(main_module, "record_processing_metrics", Mock())
+
+    for run_id in run_ids:
+        main_module.execute_processing(run_id, "test-correlation")
+
+    keys = [stored_runs[run_id]["curated_object_key"] for run_id in run_ids]
+    assert keys == [
+        f"dataset/{upload_id}/{run_id}/data.parquet" for run_id in run_ids
+    ]
+    assert len(stored_objects) == 2
+    downloaded = [
+        client.get(f"/processing-runs/{run_id}/download").content
+        for run_id in run_ids
+    ]
+    assert downloaded == [
+        b"PAR1first-run", b"PAR1second-run",
+    ]
 
 
 def test_download_raw_object_returns_bytes_and_releases_connection(
@@ -718,7 +778,7 @@ def test_execute_processing_returns_curated_result(monkeypatch):
         f"{dataset_id}/{upload_id}/sales.csv"
     )
     curated_object_key = (
-        f"{dataset_id}/{upload_id}/data.parquet"
+        f"{dataset_id}/{upload_id}/{run_id}/data.parquet"
     )
 
     csv_content = b"order_id,amount\n1,10\n"
