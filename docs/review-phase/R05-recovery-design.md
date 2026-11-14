@@ -1,9 +1,9 @@
 # R05 - Interrupted-run recovery design
 
 **Date:** 2026-11-14
-**Status:** Design draft; failure tests and implementation pending.
+**Status:** Design implemented and R06–R07 recovery checks passed in disposable CI; see [implementation evidence](R06-R10-implementation.md).
 
-## Current failure
+## Baseline failure
 
 `claim_processing_run` changes `queued` to `running` once. A dead worker leaves that row `running`; redelivery cannot claim it. Success/failure updates check only `status = 'running'`, so a late worker could finalize after a future retry. The run-specific object key introduced in R01 does not distinguish attempts.
 

@@ -17,7 +17,7 @@ This phase improves the existing **local, API-driven batch data platform prototy
 | Verification | `.github/workflows/tests.yml` runs mocked pytest tests only. `scripts/verify_saved_tables.py` is a manual live smoke test and does not yet check the download path. | The reviews report 200 CI tests at this commit, but no current clean-clone full-stack run or history-aware secret scan is recorded. |
 | Scope | Compose ports bind to `127.0.0.1`; README warns about absent authentication and the local SQL executor. Terraform and Kubernetes are API-only labs. | Keep these limits explicit. Authentication, multi-tenancy, high availability and full-stack Kubernetes deployment are outside this review's acceptance target. |
 
-**Verification update (2026-11-14):** R01 has retained-stack evidence; R02's clean disposable-stack CI run passed 214 tests and the full smoke flow; R03's history-aware scan covered all 17 commits. Migration 005 and the normal smoke flow passed on the retained local stack. Live fault injection and load checks for R06–R10 remain pending. See the session records for limits.
+**Verification update (2026-11-14):** R01 has retained-stack evidence; R02's clean disposable-stack CI run passed 214 tests and the full smoke flow; R03's history-aware scan covered all 17 commits. Migration 005 and the normal smoke flow passed on the retained local stack. R06–R07 recovery checks passed in a disposable CI stack. Live load and consistency checks for R08–R10 remain pending. See the session records for limits.
 
 ## Target and priorities
 
@@ -63,7 +63,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R05 — Design interrupted-job recovery
 
-- **Status:** [Design](R05-recovery-design.md) records guarantees, state races, and migration policy; implementation has focused tests, with live fault injection tracked under R06 and R07.
+- **Status:** Complete for the local scope. The [design](R05-recovery-design.md) records guarantees, state races, and migration policy; R06–R07 implemented and verified the recovery path.
 - **Why:** A worker killed after claiming can leave `running` forever (architecture F1; audit H-01).
 - **Do:** Specify lease expiry, attempt limit, claim token, heartbeat/recovery trigger and migration for existing databases. Fence both PostgreSQL finalization **and object writes** so a stale attempt cannot overwrite a newer one.
 - **Together:** Draw state transitions and race cases; write focused failing tests for death after claim, redelivery, expired lease, stale worker resume and exhausted retries.
@@ -71,7 +71,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R06 — Implement and fault-test job recovery
 
-- **Status:** Code and focused tests added; live crash/retry fault injection pending. See [R06–R10 checkpoint](R06-R10-implementation.md).
+- **Status:** Complete for the local scope on 2026-11-14. Disposable CI verified an actual worker kill after artifact upload, retry with a separate key, stale-token fencing, and terminal failure after the attempt budget. See [R06–R10 checkpoint](R06-R10-implementation.md).
 - **Why:** A design alone leaves the known stranded-run failure in place.
 - **Do:** Implement the R05 lease and fencing model incrementally, with a bounded recovery loop or command and compatible schema migration.
 - **Together:** Run unit and live fault injection at claim, transform, object upload and final DB update; inspect retries and normal validation failures.
@@ -79,7 +79,7 @@ Each session follows the same learning loop: show the current failure and its ef
 
 ### R07 — Make DB-to-broker handoff recoverable
 
-- **Status:** Transactional outbox and reconciler added; live broker-outage and ambiguous-confirm checks pending.
+- **Status:** Complete for the local scope on 2026-11-14. Disposable CI verified broker-outage recovery, transactional rollback, repeated publication after an uncertain confirmation, and single execution under duplicate delivery.
 - **Why:** A committed queued row can exist without a confirmed RabbitMQ message (architecture F2; audit H-02).
 - **Do:** Prefer a transactional outbox that stores run and publication intent together, then publishes with confirms. A smaller reconciler is acceptable only if it demonstrably closes the same stranded-queue case. Keep consumer handling safe for duplicate messages.
 - **Together:** Test broker outage, DB rollback, publisher death after broker confirmation and repeated delivery; expose pending intents for diagnosis.

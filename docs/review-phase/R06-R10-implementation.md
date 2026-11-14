@@ -1,7 +1,7 @@
 # R06–R10 implementation checkpoint
 
 **Date:** 2026-11-14
-**Status:** Code, migration, and clean-stack CI passed; live fault-injection acceptance pending.
+**Status:** R06–R07 recovery checks passed in disposable CI; R08–R10 live acceptance pending.
 
 ## Changes
 
@@ -15,7 +15,7 @@
 
 ## Verification and deployment limits
 
-The owner's baseline suite passed 202 tests before this increment. Focused API, worker, and failure-boundary tests passed **108 tests**; the new reliability file separately passed **11 tests** after the idempotency-header case was added. Three query-process tests that previously timed out passed together in a focused run. An earlier local full suite reported **212 passed, 2 failed, 1 warning** in 193.56 seconds. Both failures were existing query-executor tests whose child processes exceeded the 10-second deadline on this loaded local host. The later CI result below passed all 214 tests on a GitHub runner. Live fault injection remains unverified; normal smoke success alone does not establish R06–R10 recovery behavior.
+The owner's baseline suite passed 202 tests before this increment. Focused API, worker, and failure-boundary tests passed **108 tests**; the new reliability file separately passed **11 tests** after the idempotency-header case was added. Three query-process tests that previously timed out passed together in a focused run. An earlier local full suite reported **212 passed, 2 failed, 1 warning** in 193.56 seconds. Both failures were existing query-executor tests whose child processes exceeded the 10-second deadline on this loaded local host. GitHub CI later passed all 214 tests and the R06–R07 fault checks below. The normal smoke run alone did not establish recovery behavior.
 
 Migration 005 was applied to the owner's retained local PostgreSQL database on 2026-11-14. A direct read verified all four new columns and the `processing_outbox` table. Other existing databases still need the migration before rebuilding services; fresh databases use `db/init.sql`. Do not delete retained volumes to get a clean test; use a disposable project or the isolated CI job. The new `reconciler` service is needed for publication and lease recovery.
 
@@ -32,3 +32,5 @@ The report can contain orphaned objects left by uncertain operations; inspect it
 The short [architecture decision notes](DECISIONS.md) record why PostgreSQL, MinIO, RabbitMQ, and DuckDB remain in this local design.
 
 **Clean-stack update (2026-11-14):** [GitHub Actions run 43618922391](https://github.com/RoieMugi/self-service-data-platform/actions/runs/43618922391) passed the full 214-test suite and a fresh disposable Compose smoke run. The S3-compatible container is now the publicly pullable, pinned Silo fork because the former MinIO image repositories reject fresh anonymous pulls. The CI success covers the normal workflow, not migration of an existing object-store volume or the live crash, broker-outage, load, and uncertain-commit scenarios listed in the roadmap.
+
+**R06–R07 recovery acceptance (2026-11-14):** [GitHub Actions run 43635562123](https://github.com/RoieMugi/self-service-data-platform/actions/runs/43635562123) passed all 214 pytest tests, the normal clean-stack smoke test, and `scripts/verify_recovery.py` in a disposable stack. The recovery check forced an expired lease and confirmed a retry at attempt 2; killed the actual worker after its first Parquet upload and confirmed a second attempt with a distinct object key; rejected finalization using the expired token; marked an exhausted third attempt failed; and verified that a rolled-back run left neither run nor outbox row. It also stopped RabbitMQ during submission, confirmed the pending outbox intent was published after restart, and republished an already confirmed run to verify duplicate deliveries still produced one committed attempt. The ambiguous confirmation case was simulated by clearing the publication marker after broker acceptance. These checks do not cover R08 load, R09 object-loss injection, R10 uncertain table-save retries, or migration of a retained MinIO volume to Silo.
