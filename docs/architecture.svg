@@ -80,7 +80,8 @@
   <text class="label" x="1158" y="508">Write Parquet</text>
 
   <line class="rule" x1="52" y1="620" x2="1548" y2="620"/>
-  <text class="section" x="52" y="655">QUERY, SAVE, AND DOWNLOAD</text>
+  <text class="section" x="52" y="655">QUERY, SAVE</text>
+  <text class="section" x="52" y="676">AND DOWNLOAD</text>
   <path class="line" d="M280 268 H245 V758 H650"/>
   <text class="label" x="488" y="746">API sends bounded query</text>
   <rect x="650" y="700" width="330" height="116" rx="12" fill="#eff6ff" stroke="#60a5fa" stroke-width="2"/>
